@@ -9,7 +9,7 @@ class Camera {
     this.cx = 0;
     this.cy = 0;
     this.zoom = 1;
-    this.minZoom = 0.1;
+    this.minZoom = 0.005;
     this.maxZoom = 5;
   }
 
@@ -1388,6 +1388,50 @@ class App {
     });
   }
 
+  distributeToGrid() {
+    const entityManager = this.entityManager;
+    const selectedIds = entityManager.getSelectedIds();
+    
+    if (selectedIds.length < 2) return;
+    
+    const entities = selectedIds
+      .map(id => entityManager.getEntity(id))
+      .filter(e => e)
+      .map(e => ({
+        id: e.data.id,
+        x: e.data.x,
+        y: e.data.y,
+        width: (e.element.naturalWidth || e.element.offsetWidth) * e.data.scale,
+        height: (e.element.naturalHeight || e.element.offsetHeight) * e.data.scale
+      }));
+
+    if (entities.length < 2) return;
+
+    const startX = entities[0].x;
+    const startY = entities[0].y;
+    const GAP = 50;
+    const COLS = 4;
+
+    entities.forEach((entity, index) => {
+      const row = Math.floor(index / COLS);
+      const col = index % COLS;
+      
+      entity.x = startX + col * (entity.width + GAP);
+      entity.y = startY + row * (entity.height + GAP);
+    });
+
+    entities.forEach(entity => {
+      const el = entityManager.getEntity(entity.id);
+      if (el) {
+        el.data.x = entity.x;
+        el.data.y = entity.y;
+        el.element.style.left = `${entity.x}px`;
+        el.element.style.top = `${entity.y}px`;
+        entityManager.projectManager.updateImage(entity.id, { x: entity.x, y: entity.y });
+      }
+    });
+  }
+
   repositionImagesInFrames() {
     const config = this.projectManager.getConfig();
     config.images.forEach(img => {
@@ -1865,6 +1909,8 @@ document.addEventListener('DOMContentLoaded', () => {
       window.app.distributeHorizontally();
     } else if (action === 'distribute-vertically') {
       window.app.distributeVertically();
+    } else if (action === 'distribute-to-grid') {
+      window.app.distributeToGrid();
     }
   });
 

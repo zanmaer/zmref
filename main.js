@@ -108,6 +108,12 @@ function createWindow() {
           mainWindow.webContents.send('context-menu-action', 'distribute-vertically');
         }
       },
+      {
+        label: 'Distribute to Grid',
+        click: () => {
+          mainWindow.webContents.send('context-menu-action', 'distribute-to-grid');
+        }
+      },
       { type: 'separator' },
       {
         label: 'Reset Zoom',
