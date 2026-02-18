@@ -70,7 +70,8 @@ class ProjectManager {
     this.projectPath = null;
     this.config = {
       canvas: { cx: 0, cy: 0, zoom: 1 },
-      images: []
+      images: [],
+      frames: []
     };
     this.saveTimeout = null;
   }
@@ -107,6 +108,7 @@ class ProjectManager {
       if (result.success) {
         try {
           this.config = JSON.parse(result.data);
+          if (!this.config.frames) this.config.frames = [];
         } catch (e) {
           console.error('[ProjectManager] Failed to parse config:', e);
           this.resetConfig();
@@ -123,7 +125,8 @@ class ProjectManager {
   resetConfig() {
     this.config = {
       canvas: { cx: 0, cy: 0, zoom: 1 },
-      images: []
+      images: [],
+      frames: []
     };
   }
 
@@ -191,6 +194,28 @@ class ProjectManager {
   removeImage(id) {
     this.config.images = this.config.images.filter(i => i.id !== id);
     this.saveConfig();
+  }
+
+  addFrame(frameData) {
+    this.config.frames.push(frameData);
+    this.saveConfig();
+  }
+
+  updateFrame(id, data) {
+    const frame = this.config.frames.find(f => f.id === id);
+    if (frame) {
+      Object.assign(frame, data);
+      this.saveConfig();
+    }
+  }
+
+  removeFrame(id) {
+    this.config.frames = this.config.frames.filter(f => f.id !== id);
+    this.saveConfig();
+  }
+
+  getFrames() {
+    return this.config.frames || [];
   }
 
   async getFilesDir() {
@@ -268,6 +293,7 @@ class EntityManager {
     img.style.left = `${imageData.x}px`;
     img.style.top = `${imageData.y}px`;
     img.style.transform = `scale(${imageData.scale})`;
+    img.style.zIndex = 10;
 
     this.setupEntityEvents(img, imageData);
 
@@ -296,12 +322,19 @@ class EntityManager {
       e.stopPropagation();
     };
 
+    const onDragStart = (e) => {
+      e.dataTransfer.setData('text/plain', imageData.id);
+      e.dataTransfer.effectAllowed = 'move';
+    };
+
     element.addEventListener('mousedown', onMouseDown);
     element.addEventListener('contextmenu', onContextMenu);
+    element.addEventListener('dragstart', onDragStart);
 
     element._cleanup = () => {
       element.removeEventListener('mousedown', onMouseDown);
       element.removeEventListener('contextmenu', onContextMenu);
+      element.removeEventListener('dragstart', onDragStart);
       delete element._cleanup;
     };
   }
@@ -309,6 +342,7 @@ class EntityManager {
   startDrag(e, element, imageData) {
     this.dragState.isDragging = true;
     this.dragState.entity = element;
+    this.dragState.imageData = imageData;
     this.dragState.startX = e.clientX;
     this.dragState.startY = e.clientY;
     this.dragState.offsetX = imageData.x;
@@ -385,6 +419,394 @@ class EntityManager {
   getEntity(id) {
     return this.entities.get(id);
   }
+
+  attachImageToFrame(imageId, frameId, frameX, frameY) {
+    const img = this.projectManager.config.images.find(i => i.id === imageId);
+    if (img) {
+      img.frameId = frameId;
+      img.x = frameX;
+      img.y = frameY;
+      this.projectManager.saveConfig();
+    }
+  }
+
+  detachImageFromFrame(imageId) {
+    const img = this.projectManager.config.images.find(i => i.id === imageId);
+    if (img && img.frameId) {
+      const frame = this.projectManager.config.frames.find(f => f.id === img.frameId);
+      if (frame) {
+        img.x = frame.x + (img.x - frame.x);
+        img.y = frame.y + (img.y - frame.y);
+      }
+      img.frameId = null;
+      this.projectManager.saveConfig();
+    }
+  }
+}
+
+const FRAME_MIN_SIZE = 100;
+const FRAME_DEFAULT_SIZE = { width: 300, height: 200 };
+
+class FrameManager {
+  constructor(camera, projectManager, canvasEl) {
+    this.camera = camera;
+    this.projectManager = projectManager;
+    this.canvas = canvasEl;
+    this.frames = new Map();
+    this.selectedFrame = null;
+
+    this.resizeState = {
+      isResizing: false,
+      frame: null,
+      handle: null,
+      startX: 0,
+      startY: 0,
+      startWidth: 0,
+      startHeight: 0,
+      startFrameX: 0,
+      startFrameY: 0
+    };
+
+    this.dragState = {
+      isDragging: false,
+      frame: null,
+      startX: 0,
+      startY: 0,
+      startFrameX: 0,
+      startFrameY: 0
+    };
+  }
+
+  async createFrame(frameData) {
+    const frameEl = document.createElement('div');
+    frameEl.className = 'frame-container';
+    frameEl.dataset.id = frameData.id;
+
+    const contentEl = document.createElement('div');
+    contentEl.className = 'frame-content';
+    frameEl.appendChild(contentEl);
+
+    const labelEl = document.createElement('div');
+    labelEl.className = 'frame-label';
+    labelEl.contentEditable = true;
+    labelEl.textContent = frameData.name || '';
+    labelEl.dataset.frameId = frameData.id;
+    frameEl.appendChild(labelEl);
+
+    this.setupLabelEvents(labelEl, frameData);
+
+    const handles = ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'];
+    for (const handle of handles) {
+      const handleEl = document.createElement('div');
+      handleEl.className = `frame-handle frame-handle-${handle}`;
+      handleEl.dataset.handle = handle;
+      frameEl.appendChild(handleEl);
+    }
+
+    frameEl.style.left = `${frameData.x}px`;
+    frameEl.style.top = `${frameData.y}px`;
+    frameEl.style.width = `${frameData.width}px`;
+    frameEl.style.height = `${frameData.height}px`;
+    frameEl.style.zIndex = frameData.zIndex || 0;
+
+    this.setupFrameEvents(frameEl, frameData);
+
+    this.canvas.appendChild(frameEl);
+    this.frames.set(frameData.id, { element: frameEl, data: frameData });
+
+    return frameEl;
+  }
+
+  setupLabelEvents(labelEl, frameData) {
+    const onBlur = () => {
+      const newName = labelEl.textContent.trim();
+      if (newName !== frameData.name) {
+        frameData.name = newName;
+        this.projectManager.updateFrame(frameData.id, { name: newName });
+      }
+    };
+
+    const onKeyDown = (e) => {
+      e.stopPropagation();
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        labelEl.blur();
+      }
+      if (e.key === 'Escape') {
+        labelEl.textContent = frameData.name;
+        labelEl.blur();
+      }
+    };
+
+    const onFocus = () => {
+      const range = document.createRange();
+      range.selectNodeContents(labelEl);
+      const selection = window.getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
+    };
+
+    labelEl.addEventListener('blur', onBlur);
+    labelEl.addEventListener('keydown', onKeyDown);
+    labelEl.addEventListener('focus', onFocus);
+
+    labelEl._cleanupLabel = () => {
+      labelEl.removeEventListener('blur', onBlur);
+      labelEl.removeEventListener('keydown', onKeyDown);
+      labelEl.removeEventListener('focus', onFocus);
+      delete labelEl._cleanupLabel;
+    };
+  }
+
+  setupFrameEvents(frameEl, frameData) {
+    const onMouseDown = (e) => {
+      if (e.target.classList.contains('frame-label')) {
+        return;
+      }
+      if (e.button === 0 && e.target.classList.contains('frame-handle')) {
+        e.preventDefault();
+        e.stopPropagation();
+        this.startResize(e, frameEl, frameData, e.target.dataset.handle);
+      } else if (e.button === 0 && !e.target.classList.contains('frame-handle')) {
+        e.preventDefault();
+        e.stopPropagation();
+        this.selectFrame(frameEl, frameData);
+        this.startDrag(e, frameEl, frameData);
+      }
+    };
+
+    const onContextMenu = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      this.selectFrame(frameEl, frameData);
+    };
+
+    frameEl.addEventListener('mousedown', onMouseDown);
+    frameEl.addEventListener('contextmenu', onContextMenu);
+
+    frameEl._cleanup = () => {
+      frameEl.removeEventListener('mousedown', onMouseDown);
+      frameEl.removeEventListener('contextmenu', onContextMenu);
+      delete frameEl._cleanup;
+    };
+  }
+
+  selectFrame(frameEl, frameData) {
+    if (this.selectedFrame) {
+      this.selectedFrame.classList.remove('selected');
+    }
+    this.selectedFrame = frameEl;
+    frameEl.classList.add('selected');
+  }
+
+  deselectFrame() {
+    if (this.selectedFrame) {
+      this.selectedFrame.classList.remove('selected');
+      this.selectedFrame = null;
+    }
+  }
+
+  startResize(e, frameEl, frameData, handle) {
+    if (frameData.locked) return;
+    
+    this.resizeState.isResizing = true;
+    this.resizeState.frame = frameEl;
+    this.resizeState.handle = handle;
+    this.resizeState.startX = e.clientX;
+    this.resizeState.startY = e.clientY;
+    this.resizeState.startWidth = frameData.width;
+    this.resizeState.startHeight = frameData.height;
+    this.resizeState.startFrameX = frameData.x;
+    this.resizeState.startFrameY = frameData.y;
+
+    frameEl.classList.add('resizing');
+  }
+
+  handleResize(e) {
+    if (!this.resizeState.isResizing || !this.resizeState.frame) return;
+
+    const dx = (e.clientX - this.resizeState.startX) / this.camera.zoom;
+    const dy = (e.clientY - this.resizeState.startY) / this.camera.zoom;
+    const handle = this.resizeState.handle;
+
+    let newWidth = this.resizeState.startWidth;
+    let newHeight = this.resizeState.startHeight;
+    let newX = this.resizeState.startFrameX;
+    let newY = this.resizeState.startFrameY;
+
+    if (handle.includes('e')) {
+      newWidth = Math.max(FRAME_MIN_SIZE, this.resizeState.startWidth + dx);
+    }
+    if (handle.includes('w')) {
+      const widthChange = Math.min(dx, this.resizeState.startWidth - FRAME_MIN_SIZE);
+      newWidth = this.resizeState.startWidth - widthChange;
+      newX = this.resizeState.startFrameX + widthChange;
+    }
+    if (handle.includes('s')) {
+      newHeight = Math.max(FRAME_MIN_SIZE, this.resizeState.startHeight + dy);
+    }
+    if (handle.includes('n')) {
+      const heightChange = Math.min(dy, this.resizeState.startHeight - FRAME_MIN_SIZE);
+      newHeight = this.resizeState.startHeight - heightChange;
+      newY = this.resizeState.startFrameY + heightChange;
+    }
+
+    this.resizeState.frame.style.width = `${newWidth}px`;
+    this.resizeState.frame.style.height = `${newHeight}px`;
+    this.resizeState.frame.style.left = `${newX}px`;
+    this.resizeState.frame.style.top = `${newY}px`;
+
+    this.resizeState.currentWidth = newWidth;
+    this.resizeState.currentHeight = newHeight;
+    this.resizeState.currentX = newX;
+    this.resizeState.currentY = newY;
+  }
+
+  endResize() {
+    if (this.resizeState.isResizing && this.resizeState.currentWidth) {
+      const frameId = this.resizeState.frame.dataset.id;
+      this.projectManager.updateFrame(frameId, {
+        x: this.resizeState.currentX,
+        y: this.resizeState.currentY,
+        width: this.resizeState.currentWidth,
+        height: this.resizeState.currentHeight
+      });
+      this.resizeState.frame.classList.remove('resizing');
+    }
+
+    this.resizeState.isResizing = false;
+    this.resizeState.frame = null;
+    this.resizeState.handle = null;
+    this.resizeState.currentWidth = null;
+    this.resizeState.currentHeight = null;
+  }
+
+  startDrag(e, frameEl, frameData) {
+    if (frameData.locked) return;
+    
+    this.dragState.isDragging = true;
+    this.dragState.frame = frameEl;
+    this.dragState.startX = e.clientX;
+    this.dragState.startY = e.clientY;
+    this.dragState.startFrameX = frameData.x;
+    this.dragState.startFrameY = frameData.y;
+
+    frameEl.classList.add('dragging');
+  }
+
+  handleDrag(e) {
+    if (!this.dragState.isDragging || !this.dragState.frame) return;
+
+    const dx = (e.clientX - this.dragState.startX) / this.camera.zoom;
+    const dy = (e.clientY - this.dragState.startY) / this.camera.zoom;
+
+    const newX = this.dragState.startFrameX + dx;
+    const newY = this.dragState.startFrameY + dy;
+
+    this.dragState.frame.style.left = `${newX}px`;
+    this.dragState.frame.style.top = `${newY}px`;
+
+    this.dragState.currentX = newX;
+    this.dragState.currentY = newY;
+  }
+
+  endDrag() {
+    if (this.dragState.isDragging && this.dragState.currentX !== null) {
+      const frameId = this.dragState.frame.dataset.id;
+      this.projectManager.updateFrame(frameId, {
+        x: this.dragState.currentX,
+        y: this.dragState.currentY
+      });
+      this.dragState.frame.classList.remove('dragging');
+    }
+
+    this.dragState.isDragging = false;
+    this.dragState.frame = null;
+    this.dragState.currentX = null;
+    this.dragState.currentY = null;
+  }
+
+  async loadAllFrames() {
+    const frames = this.projectManager.getFrames();
+    for (const frameData of frames) {
+      await this.createFrame(frameData);
+    }
+  }
+
+  clearAll() {
+    this.frames.forEach(({ element, element: { _cleanup } }) => {
+      if (_cleanup) _cleanup();
+      element.remove();
+    });
+    this.frames.clear();
+    this.selectedFrame = null;
+  }
+
+  getFrame(id) {
+    return this.frames.get(id);
+  }
+
+  deleteFrame(id) {
+    const frame = this.frames.get(id);
+    if (frame) {
+      const frameData = frame.data;
+      const config = this.projectManager.getConfig();
+
+      config.images.forEach(img => {
+        if (img.frameId === id) {
+          img.frameId = null;
+          this.projectManager.updateImage(img.id, { frameId: null });
+        }
+      });
+
+      if (frame._cleanup) frame._cleanup();
+      frame.element.remove();
+      this.frames.delete(id);
+      this.projectManager.removeFrame(id);
+
+      if (this.selectedFrame === frame.element) {
+        this.selectedFrame = null;
+      }
+    }
+  }
+
+  async addFrame() {
+    const id = await window.api.crypto.randomUUID();
+    const frameData = {
+      id,
+      name: `Frame ${this.frames.size + 1}`,
+      x: 200,
+      y: 200,
+      width: FRAME_DEFAULT_SIZE.width,
+      height: FRAME_DEFAULT_SIZE.height,
+      zIndex: 0,
+      locked: false,
+      imageIds: []
+    };
+
+    this.projectManager.addFrame(frameData);
+    await this.createFrame(frameData);
+    this.selectFrame(this.frames.get(id).element, frameData);
+
+    return frameData;
+  }
+
+  bringToFront(frameEl, frameData) {
+    const maxZ = Math.max(10, ...this.frames.values().map(f => f.data.zIndex || 0));
+    const newZ = Math.min(maxZ + 1, 10);
+    frameEl.style.zIndex = newZ;
+    this.projectManager.updateFrame(frameData.id, { zIndex: newZ });
+  }
+
+  clearFrame(id) {
+    const config = this.projectManager.getConfig();
+    config.images.forEach(img => {
+      if (img.frameId === id) {
+        img.frameId = null;
+        this.projectManager.updateImage(img.id, { frameId: null });
+      }
+    });
+  }
 }
 
 class App {
@@ -403,6 +825,7 @@ class App {
     this.camera = new Camera();
     this.projectManager = new ProjectManager();
     this.entityManager = new EntityManager(this.camera, this.projectManager, this.canvas);
+    this.frameManager = new FrameManager(this.camera, this.projectManager, this.canvas);
 
     this.panState = {
       isPanning: false,
@@ -465,6 +888,8 @@ class App {
     this.updateCanvasTransform();
     
     await this.entityManager.loadAllImages();
+    await this.frameManager.loadAllFrames();
+    this.repositionImagesInFrames();
     return true;
   }
 
@@ -480,6 +905,27 @@ class App {
     this.updateCanvasTransform();
 
     await this.entityManager.loadAllImages();
+    await this.frameManager.loadAllFrames();
+    this.repositionImagesInFrames();
+  }
+
+  repositionImagesInFrames() {
+    const config = this.projectManager.getConfig();
+    config.images.forEach(img => {
+      if (img.frameId) {
+        const entity = this.entityManager.getEntity(img.id);
+        if (entity) {
+          const frame = this.frameManager.getFrame(img.frameId);
+          if (frame) {
+            const frameEl = frame.element;
+            const contentEl = frameEl.querySelector('.frame-content');
+            contentEl.appendChild(entity.element);
+            entity.element.style.left = `${img.x - frame.data.x}px`;
+            entity.element.style.top = `${img.y - frame.data.y}px`;
+          }
+        }
+      }
+    });
   }
 
   async addImages() {
@@ -528,12 +974,17 @@ class App {
       this.startPan(e);
     } else if (e.button === 0 && e.target === this.viewport) {
       this.entityManager.endDrag();
+      this.frameManager.deselectFrame();
     }
   }
 
   handleMouseMove(e) {
     if (this.panState.isPanning) {
       this.updatePan(e);
+    } else if (this.frameManager.resizeState.isResizing) {
+      this.frameManager.handleResize(e);
+    } else if (this.frameManager.dragState.isDragging) {
+      this.frameManager.handleDrag(e);
     } else if (this.entityManager.dragState.isDragging) {
       this.entityManager.handleDrag(e);
     }
@@ -542,6 +993,12 @@ class App {
   handleMouseUp() {
     if (this.panState.isPanning) {
       this.endPan();
+    }
+    if (this.frameManager.resizeState.isResizing) {
+      this.frameManager.endResize();
+    }
+    if (this.frameManager.dragState.isDragging) {
+      this.frameManager.endDrag();
     }
     this.entityManager.endDrag();
   }
@@ -555,6 +1012,9 @@ class App {
       if (draggingEntity) {
         const id = draggingEntity.dataset.id;
         this.entityManager.deleteEntity(id);
+      } else if (this.frameManager.selectedFrame) {
+        const id = this.frameManager.selectedFrame.dataset.id;
+        this.frameManager.deleteFrame(id);
       }
     } else if (e.code === 'Digit0' && (e.ctrlKey || e.metaKey)) {
       e.preventDefault();
@@ -574,25 +1034,82 @@ class App {
 
   handleDragOver(e) {
     e.preventDefault();
+
+    const frameEl = e.target.closest('.frame-container');
+    if (frameEl) {
+      frameEl.classList.add('drag-over');
+    }
+
+    document.querySelectorAll('.frame-container').forEach(el => {
+      if (el !== frameEl) {
+        el.classList.remove('drag-over');
+      }
+    });
   }
 
   async handleDrop(e) {
     e.preventDefault();
 
-    const files = Array.from(e.dataTransfer.files);
-    if (files.length === 0) return;
+    document.querySelectorAll('.frame-container').forEach(el => {
+      el.classList.remove('drag-over');
+    });
 
+    const frameEl = e.target.closest('.frame-container');
+    const files = Array.from(e.dataTransfer.files);
+    
     const hasProject = await this.ensureProjectOpen();
     if (!hasProject) return;
 
-    for (const file of files) {
-      const ext = '.' + file.name.split('.').pop().toLowerCase();
-      if (IMAGE_EXTENSIONS.includes(ext)) {
-        await this.entityManager.addImageFromFile(file.path);
+    if (files.length > 0) {
+      for (const file of files) {
+        const ext = '.' + file.name.split('.').pop().toLowerCase();
+        if (IMAGE_EXTENSIONS.includes(ext)) {
+          const imageData = await this.entityManager.addImageFromFile(file.path);
+          if (frameEl && imageData) {
+            const frameId = frameEl.dataset.id;
+            const frame = this.frameManager.getFrame(frameId);
+            if (frame) {
+              const rect = frameEl.getBoundingClientRect();
+              const dropX = (e.clientX - rect.left) / this.camera.zoom;
+              const dropY = (e.clientY - rect.top) / this.camera.zoom;
+
+              this.attachImageToFrame(imageData.id, frameId, frame.data.x + dropX, frame.data.y + dropY, frameEl);
+            }
+          }
+        }
+      }
+    } else if (frameEl) {
+      const imageId = e.dataTransfer.getData('text/plain');
+      if (imageId) {
+        const frameId = frameEl.dataset.id;
+        const frame = this.frameManager.getFrame(frameId);
+        if (frame) {
+          const rect = frameEl.getBoundingClientRect();
+          const dropX = (e.clientX - rect.left) / this.camera.zoom;
+          const dropY = (e.clientY - rect.top) / this.camera.zoom;
+
+          this.attachImageToFrame(imageId, frameId, frame.data.x + dropX, frame.data.y + dropY, frameEl);
+        }
       }
     }
 
     this.updateCanvasTransform();
+  }
+
+  async attachImageToFrame(imageId, frameId, canvasX, canvasY, frameEl) {
+    const entity = this.entityManager.getEntity(imageId);
+    if (!entity) return;
+
+    const frame = this.frameManager.getFrame(frameId);
+    if (!frame) return;
+
+    const contentEl = frameEl.querySelector('.frame-content');
+    contentEl.appendChild(entity.element);
+
+    entity.element.style.left = `${canvasX - frame.data.x}px`;
+    entity.element.style.top = `${canvasY - frame.data.y}px`;
+
+    this.entityManager.attachImageToFrame(imageId, frameId, canvasX, canvasY);
   }
 
   startPan(e) {
@@ -634,6 +1151,62 @@ class App {
     this.updateCanvasTransform();
     this.projectManager.updateCanvas(this.camera.getState());
     this.updateStatus();
+  }
+
+  async createFrame() {
+    const hasProject = await this.ensureProjectOpen();
+    if (!hasProject) return;
+    await this.frameManager.addFrame();
+  }
+
+  deleteSelectedFrame() {
+    if (this.frameManager.selectedFrame) {
+      const id = this.frameManager.selectedFrame.dataset.id;
+      this.frameManager.deleteFrame(id);
+    }
+  }
+
+  clearSelectedFrame() {
+    if (this.frameManager.selectedFrame) {
+      const id = this.frameManager.selectedFrame.dataset.id;
+      this.frameManager.clearFrame(id);
+      const frame = this.frameManager.getFrame(id);
+      if (frame) {
+        const config = this.projectManager.getConfig();
+        config.images.forEach(img => {
+          if (img.frameId === id) {
+            const entity = this.entityManager.getEntity(img.id);
+            if (entity) {
+              this.canvas.appendChild(entity.element);
+              entity.element.style.left = `${img.x}px`;
+              entity.element.style.top = `${img.y}px`;
+            }
+          }
+        });
+      }
+    }
+  }
+
+  bringSelectedFrameToFront() {
+    if (this.frameManager.selectedFrame) {
+      const id = this.frameManager.selectedFrame.dataset.id;
+      const frame = this.frameManager.getFrame(id);
+      if (frame) {
+        this.frameManager.bringToFront(this.frameManager.selectedFrame, frame.data);
+      }
+    }
+  }
+
+  toggleFrameLock() {
+    if (this.frameManager.selectedFrame) {
+      const id = this.frameManager.selectedFrame.dataset.id;
+      const frame = this.frameManager.getFrame(id);
+      if (frame) {
+        frame.data.locked = !frame.data.locked;
+        this.frameManager.selectedFrame.classList.toggle('locked', frame.data.locked);
+        this.projectManager.updateFrame(id, { locked: frame.data.locked });
+      }
+    }
   }
 
   async handleFilesFromIPC(paths) {
@@ -679,6 +1252,16 @@ document.addEventListener('DOMContentLoaded', () => {
       window.app.openProject();
     } else if (action === 'reset-zoom') {
       window.app.resetZoom();
+    } else if (action === 'create-frame') {
+      window.app.createFrame();
+    } else if (action === 'delete-frame') {
+      window.app.deleteSelectedFrame();
+    } else if (action === 'clear-frame') {
+      window.app.clearSelectedFrame();
+    } else if (action === 'bring-to-front') {
+      window.app.bringSelectedFrameToFront();
+    } else if (action === 'lock-frame') {
+      window.app.toggleFrameLock();
     }
   });
 

@@ -2,6 +2,10 @@ const { app, BrowserWindow, ipcMain, dialog, webUtils, Menu } = require('electro
 const path = require('path');
 const fs = require('fs');
 
+app.commandLine.appendSwitch('disable-gpu-compositing');
+app.commandLine.appendSwitch('disable-accelerated-video-decode');
+app.commandLine.appendSwitch('disable-gpu-memory-buffer-compositor-resources');
+
 let mainWindow;
 
 const IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'webp', 'gif', 'svg'];
@@ -58,6 +62,37 @@ function createWindow() {
         label: 'Open Project',
         click: () => {
           mainWindow.webContents.send('context-menu-action', 'open-project');
+        }
+      },
+      { type: 'separator' },
+      {
+        label: 'Create Frame',
+        click: () => {
+          mainWindow.webContents.send('context-menu-action', 'create-frame');
+        }
+      },
+      {
+        label: 'Delete Frame',
+        click: () => {
+          mainWindow.webContents.send('context-menu-action', 'delete-frame');
+        }
+      },
+      {
+        label: 'Clear Frame',
+        click: () => {
+          mainWindow.webContents.send('context-menu-action', 'clear-frame');
+        }
+      },
+      {
+        label: 'Bring to Front',
+        click: () => {
+          mainWindow.webContents.send('context-menu-action', 'bring-to-front');
+        }
+      },
+      {
+        label: 'Lock Frame',
+        click: () => {
+          mainWindow.webContents.send('context-menu-action', 'lock-frame');
         }
       },
       { type: 'separator' },
