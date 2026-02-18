@@ -52,7 +52,6 @@ function createWindow() {
   });
 
   mainWindow.on('drop-files', (event, paths) => {
-    console.log('[MAIN] Files dropped:', paths);
     mainWindow.webContents.send('files-dropped', paths);
   });
 
@@ -136,23 +135,23 @@ app.on('activate', () => {
   }
 });
 
+function isValidPath(filePath) {
+  return typeof filePath === 'string' && filePath.length > 0 && filePath.length < 4096;
+}
+
 ipcMain.handle('dialog:openDirectory', async () => {
-  console.log('[IPC] dialog:openDirectory called');
   const result = await dialog.showOpenDialog(mainWindow, {
     properties: ['openDirectory']
   });
-  
-  console.log('[IPC] dialog result:', result);
-  
+
   if (result.canceled) {
     return null;
   }
-  
+
   return result.filePaths[0];
 });
 
 ipcMain.handle('dialog:openFiles', async () => {
-  console.log('[IPC] dialog:openFiles called');
   try {
     const result = await dialog.showOpenDialog(mainWindow, {
       properties: ['openFile', 'multiSelections'],
@@ -160,13 +159,11 @@ ipcMain.handle('dialog:openFiles', async () => {
         { name: 'Images', extensions: IMAGE_EXTENSIONS }
       ]
     });
-    
-    console.log('[IPC] dialog result:', result);
-    
+
     if (result.canceled) {
       return [];
     }
-    
+
     return result.filePaths;
   } catch (error) {
     console.error('[IPC] dialog:openFiles error:', error);
@@ -175,6 +172,9 @@ ipcMain.handle('dialog:openFiles', async () => {
 });
 
 ipcMain.handle('fs:readDir', async (event, dirPath) => {
+  if (!isValidPath(dirPath)) {
+    return { success: false, error: 'Invalid directory path' };
+  }
   try {
     const items = fs.readdirSync(dirPath);
     return { success: true, data: items };
@@ -184,10 +184,16 @@ ipcMain.handle('fs:readDir', async (event, dirPath) => {
 });
 
 ipcMain.handle('fs:exists', async (event, filePath) => {
+  if (!isValidPath(filePath)) {
+    return false;
+  }
   return fs.existsSync(filePath);
 });
 
 ipcMain.handle('fs:mkdir', async (event, dirPath) => {
+  if (!isValidPath(dirPath)) {
+    return { success: false, error: 'Invalid directory path' };
+  }
   try {
     if (!fs.existsSync(dirPath)) {
       fs.mkdirSync(dirPath, { recursive: true });
@@ -199,6 +205,9 @@ ipcMain.handle('fs:mkdir', async (event, dirPath) => {
 });
 
 ipcMain.handle('fs:copyFile', async (event, src, dest) => {
+  if (!isValidPath(src) || !isValidPath(dest)) {
+    return { success: false, error: 'Invalid file path' };
+  }
   try {
     fs.copyFileSync(src, dest);
     return { success: true };
@@ -208,6 +217,9 @@ ipcMain.handle('fs:copyFile', async (event, src, dest) => {
 });
 
 ipcMain.handle('fs:readFile', async (event, filePath) => {
+  if (!isValidPath(filePath)) {
+    return { success: false, error: 'Invalid file path' };
+  }
   try {
     const content = fs.readFileSync(filePath, 'utf8');
     return { success: true, data: content };
@@ -217,6 +229,12 @@ ipcMain.handle('fs:readFile', async (event, filePath) => {
 });
 
 ipcMain.handle('fs:writeFile', async (event, filePath, content) => {
+  if (!isValidPath(filePath)) {
+    return { success: false, error: 'Invalid file path' };
+  }
+  if (typeof content !== 'string') {
+    return { success: false, error: 'Invalid content' };
+  }
   try {
     fs.writeFileSync(filePath, content, 'utf8');
     return { success: true };
@@ -226,6 +244,9 @@ ipcMain.handle('fs:writeFile', async (event, filePath, content) => {
 });
 
 ipcMain.handle('fs:deleteFile', async (event, filePath) => {
+  if (!isValidPath(filePath)) {
+    return { success: false, error: 'Invalid file path' };
+  }
   try {
     const normalizedPath = path.normalize(filePath);
     if (!fs.existsSync(normalizedPath)) {
@@ -240,26 +261,44 @@ ipcMain.handle('fs:deleteFile', async (event, filePath) => {
 });
 
 ipcMain.handle('fs:getFilesDir', async (event, projectPath) => {
+  if (!isValidPath(projectPath)) {
+    return null;
+  }
   return path.join(projectPath, 'files');
 });
 
 ipcMain.handle('fs:getConfigPath', async (event, projectPath) => {
+  if (!isValidPath(projectPath)) {
+    return null;
+  }
   return path.join(projectPath, 'config.json');
 });
 
 ipcMain.handle('path:join', async (event, ...args) => {
+  if (!args.every(arg => typeof arg === 'string')) {
+    return '';
+  }
   return path.join(...args);
 });
 
 ipcMain.handle('path:basename', async (event, filePath) => {
+  if (!isValidPath(filePath)) {
+    return '';
+  }
   return path.basename(filePath);
 });
 
 ipcMain.handle('path:extname', async (event, filePath) => {
+  if (!isValidPath(filePath)) {
+    return '';
+  }
   return path.extname(filePath);
 });
 
 ipcMain.handle('path:toFileURL', async (event, filePath) => {
+  if (!isValidPath(filePath)) {
+    return '';
+  }
   const { pathToFileURL } = require('url');
   return pathToFileURL(filePath).href;
 });
@@ -269,6 +308,9 @@ ipcMain.handle('crypto:randomUUID', async () => {
 });
 
 ipcMain.handle('webUtils:getPathForFile', async (event, file) => {
+  if (!file) {
+    return '';
+  }
   return webUtils.getPathForFile(file);
 });
 
@@ -327,19 +369,22 @@ ipcMain.handle('recent-projects:get', async () => {
 });
 
 ipcMain.handle('recent-projects:add', async (event, projectPath) => {
+  if (!isValidPath(projectPath)) {
+    return { success: false, error: 'Invalid project path' };
+  }
   try {
     ensureConfigDir();
     const filePath = getRecentProjectsPath();
     let projects = [];
-    
+
     if (fs.existsSync(filePath)) {
       projects = JSON.parse(fs.readFileSync(filePath, 'utf8'));
     }
-    
+
     projects = projects.filter(p => p.path !== projectPath);
     projects.unshift({ path: projectPath, openedAt: Date.now() });
     projects = projects.slice(0, 5);
-    
+
     fs.writeFileSync(filePath, JSON.stringify(projects, null, 2));
     return { success: true };
   } catch (error) {
@@ -354,21 +399,22 @@ ipcMain.handle('recent-projects:validate', async () => {
     if (!fs.existsSync(filePath)) {
       return [];
     }
-    
+
     let projects = JSON.parse(fs.readFileSync(filePath, 'utf8'));
     const validProjects = [];
-    
+
     for (const project of projects) {
+      if (!isValidPath(project.path)) continue;
       const configFile = path.join(project.path, 'config.json');
       if (fs.existsSync(configFile)) {
         validProjects.push(project);
       }
     }
-    
+
     if (validProjects.length !== projects.length) {
       fs.writeFileSync(filePath, JSON.stringify(validProjects, null, 2));
     }
-    
+
     return validProjects;
   } catch (error) {
     console.error('[IPC] recent-projects:validate error:', error);
@@ -377,16 +423,19 @@ ipcMain.handle('recent-projects:validate', async () => {
 });
 
 ipcMain.handle('recent-projects:remove', async (event, projectPath) => {
+  if (!isValidPath(projectPath)) {
+    return { success: false, error: 'Invalid project path' };
+  }
   try {
     const filePath = getRecentProjectsPath();
     if (!fs.existsSync(filePath)) {
       return { success: true };
     }
-    
+
     let projects = JSON.parse(fs.readFileSync(filePath, 'utf8'));
     projects = projects.filter(p => p.path !== projectPath);
     fs.writeFileSync(filePath, JSON.stringify(projects, null, 2));
-    
+
     return { success: true };
   } catch (error) {
     console.error('[IPC] recent-projects:remove error:', error);

@@ -1,16 +1,31 @@
-const DEBOUNCE_DELAY_MS = 500;
-const WHEEL_THROTTLE_MS = 16;
-const IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'webp', 'gif', 'svg'];
-const DEFAULT_IMAGE_POSITION = { x: 100, y: 100 };
-const POSITION_RANDOM_RANGE = 200;
+const CONSTANTS = Object.freeze({
+  DEBOUNCE_DELAY_MS: 500,
+  WHEEL_THROTTLE_MS: 16,
+  IMAGE_EXTENSIONS: ['png', 'jpg', 'jpeg', 'webp', 'gif', 'svg'],
+  DEFAULT_IMAGE_POSITION: { x: 100, y: 100 },
+  POSITION_RANDOM_RANGE: 200,
+  FRAME_MIN_SIZE: 100,
+  FRAME_DEFAULT_SIZE: { width: 300, height: 200 },
+  DISTRIBUTE_GAP: 50,
+  DISTRIBUTE_GRID_COLS: 4,
+  IMAGE_LOAD_BATCH_SIZE: 10,
+  IMAGE_LOAD_BATCH_DELAY_MS: 50,
+  SELECTION_MIN_SIZE: 5,
+  RECENT_PROJECTS_MAX: 5,
+  ZOOM_FACTOR_IN: 0.9,
+  ZOOM_FACTOR_OUT: 1.1,
+  MIN_ZOOM: 0.005,
+  MAX_ZOOM: 5,
+  DEFAULT_ZOOM: 1
+});
 
 class Camera {
   constructor() {
     this.cx = 0;
     this.cy = 0;
-    this.zoom = 1;
-    this.minZoom = 0.005;
-    this.maxZoom = 5;
+    this.zoom = CONSTANTS.DEFAULT_ZOOM;
+    this.minZoom = CONSTANTS.MIN_ZOOM;
+    this.maxZoom = CONSTANTS.MAX_ZOOM;
   }
 
   applyToElement(element) {
@@ -33,7 +48,7 @@ class Camera {
     const mouseX = screenX - viewportRect.left;
     const mouseY = screenY - viewportRect.top;
 
-    const zoomFactor = delta > 0 ? 0.9 : 1.1;
+    const zoomFactor = delta > 0 ? CONSTANTS.ZOOM_FACTOR_IN : CONSTANTS.ZOOM_FACTOR_OUT;
     const newZoom = Math.max(this.minZoom, Math.min(this.maxZoom, this.zoom * zoomFactor));
 
     if (newZoom === this.zoom) return;
@@ -49,7 +64,7 @@ class Camera {
   reset() {
     this.cx = 0;
     this.cy = 0;
-    this.zoom = 1;
+    this.zoom = CONSTANTS.DEFAULT_ZOOM;
   }
 
   getState() {
@@ -60,7 +75,7 @@ class Camera {
     if (state) {
       this.cx = state.cx || 0;
       this.cy = state.cy || 0;
-      this.zoom = state.zoom || 1;
+      this.zoom = state.zoom || CONSTANTS.DEFAULT_ZOOM;
     }
   }
 }
@@ -68,12 +83,16 @@ class Camera {
 class ProjectManager {
   constructor() {
     this.projectPath = null;
-    this.config = {
-      canvas: { cx: 0, cy: 0, zoom: 1 },
+    this.config = this._createDefaultConfig();
+    this.saveTimeout = null;
+  }
+
+  _createDefaultConfig() {
+    return {
+      canvas: { cx: 0, cy: 0, zoom: CONSTANTS.DEFAULT_ZOOM },
       images: [],
       frames: []
     };
-    this.saveTimeout = null;
   }
 
   async openProject() {
@@ -87,19 +106,15 @@ class ProjectManager {
   }
 
   async openProjectByPath(projectPath) {
-    console.log('[ProjectManager] openProjectByPath called with:', projectPath);
     if (!projectPath) return null;
 
     const configPath = await window.api.path.join(projectPath, 'config.json');
-    console.log('[ProjectManager] configPath:', configPath);
     const exists = await window.api.fs.exists(configPath);
-    console.log('[ProjectManager] config exists:', exists);
     if (!exists) return null;
 
     this.projectPath = projectPath;
     await this.ensureFilesDir();
     await this.loadConfig();
-    console.log('[ProjectManager] Config loaded, returning:', this.projectPath);
     return this.projectPath;
   }
 
@@ -110,10 +125,8 @@ class ProjectManager {
       console.error('[ProjectManager] Failed to create files directory:', result.error);
       return false;
     }
-    
-    const exists = await window.api.fs.exists(filesDir);
-    console.log('[ProjectManager] Files dir exists:', exists);
-    return exists;
+
+    return await window.api.fs.exists(filesDir);
   }
 
   async loadConfig() {
@@ -140,11 +153,7 @@ class ProjectManager {
   }
 
   resetConfig() {
-    this.config = {
-      canvas: { cx: 0, cy: 0, zoom: 1 },
-      images: [],
-      frames: []
-    };
+    this.config = this._createDefaultConfig();
   }
 
   setProjectPath(path) {
@@ -157,9 +166,8 @@ class ProjectManager {
 
   async saveConfig() {
     if (!this.projectPath) return;
-    
     if (this.saveTimeout) return;
-    
+
     this.saveTimeout = setTimeout(async () => {
       try {
         const configPath = await window.api.fs.getConfigPath(this.projectPath);
@@ -172,17 +180,17 @@ class ProjectManager {
       } finally {
         this.saveTimeout = null;
       }
-    }, DEBOUNCE_DELAY_MS);
+    }, CONSTANTS.DEBOUNCE_DELAY_MS);
   }
 
   async saveConfigNow() {
     if (!this.projectPath) return;
-    
+
     if (this.saveTimeout) {
       clearTimeout(this.saveTimeout);
       this.saveTimeout = null;
     }
-    
+
     try {
       const configPath = await window.api.fs.getConfigPath(this.projectPath);
       const result = await window.api.fs.writeFile(configPath, JSON.stringify(this.config, null, 2));
@@ -198,6 +206,22 @@ class ProjectManager {
     return this.config;
   }
 
+  getImages() {
+    return this.config.images || [];
+  }
+
+  getFrames() {
+    return this.config.frames || [];
+  }
+
+  getImageById(id) {
+    return this.config.images.find(i => i.id === id);
+  }
+
+  getFrameById(id) {
+    return this.config.frames.find(f => f.id === id);
+  }
+
   updateCanvas(state) {
     this.config.canvas = state;
     this.saveConfig();
@@ -209,7 +233,7 @@ class ProjectManager {
   }
 
   updateImage(id, data) {
-    const img = this.config.images.find(i => i.id === id);
+    const img = this.getImageById(id);
     if (img) {
       Object.assign(img, data);
       this.saveConfig();
@@ -227,7 +251,7 @@ class ProjectManager {
   }
 
   updateFrame(id, data) {
-    const frame = this.config.frames.find(f => f.id === id);
+    const frame = this.getFrameById(id);
     if (frame) {
       Object.assign(frame, data);
       this.saveConfig();
@@ -237,10 +261,6 @@ class ProjectManager {
   removeFrame(id) {
     this.config.frames = this.config.frames.filter(f => f.id !== id);
     this.saveConfig();
-  }
-
-  getFrames() {
-    return this.config.frames || [];
   }
 
   async getFilesDir() {
@@ -259,7 +279,12 @@ class EntityManager {
     this.canvas = canvasEl;
     this.entities = new Map();
     this.selectedEntities = new Set();
-    this.dragState = {
+    this.dragState = this._createDragState();
+    this._dimensionCache = new Map();
+  }
+
+  _createDragState() {
+    return {
       isDragging: false,
       entity: null,
       startX: 0,
@@ -272,21 +297,35 @@ class EntityManager {
     };
   }
 
+  _getEntityDimensions(entity) {
+    if (this._dimensionCache.has(entity.data.id)) {
+      return this._dimensionCache.get(entity.data.id);
+    }
+
+    const naturalWidth = entity.element.naturalWidth || entity.element.offsetWidth;
+    const naturalHeight = entity.element.naturalHeight || entity.element.offsetHeight;
+    const dims = {
+      width: naturalWidth * entity.data.scale,
+      height: naturalHeight * entity.data.scale
+    };
+
+    this._dimensionCache.set(entity.data.id, dims);
+    return dims;
+  }
+
+  _invalidateDimensionCache(id) {
+    this._dimensionCache.delete(id);
+  }
+
   async addImageFromFile(filePath) {
-    console.log('[EntityManager] addImageFromFile() called with:', filePath);
-    
     const id = await window.api.crypto.randomUUID();
     const ext = await window.api.path.extname(filePath);
-    const basename = await window.api.path.basename(filePath);
     const filesDir = await this.projectManager.getFilesDir();
-    console.log('[EntityManager] Files dir:', filesDir);
-    
+
     const uniqueName = `${id}${ext}`;
     const destPath = await window.api.path.join(filesDir, uniqueName);
-    console.log('[EntityManager] Destination path:', destPath);
 
     const result = await window.api.fs.copyFile(filePath, destPath);
-    console.log('[EntityManager] Copy result:', result);
     if (!result.success) {
       console.error('[EntityManager] Failed to copy file:', result.error);
       return null;
@@ -295,8 +334,8 @@ class EntityManager {
     const imageData = {
       id,
       name: uniqueName,
-      x: DEFAULT_IMAGE_POSITION.x + Math.random() * POSITION_RANDOM_RANGE,
-      y: DEFAULT_IMAGE_POSITION.y + Math.random() * POSITION_RANDOM_RANGE,
+      x: CONSTANTS.DEFAULT_IMAGE_POSITION.x + Math.random() * CONSTANTS.POSITION_RANDOM_RANGE,
+      y: CONSTANTS.DEFAULT_IMAGE_POSITION.y + Math.random() * CONSTANTS.POSITION_RANDOM_RANGE,
       scale: 1
     };
 
@@ -323,7 +362,7 @@ class EntityManager {
     img.style.transform = `scale(${imageData.scale})`;
     img.style.zIndex = 10;
 
-    this.setupEntityEvents(img, imageData);
+    this._setupEntityEvents(img, imageData);
 
     img.onerror = () => {
       console.error('[EntityManager] Failed to load image:', imageData.name, '- Path:', fullPath);
@@ -336,12 +375,12 @@ class EntityManager {
     return img;
   }
 
-  setupEntityEvents(element, imageData) {
+  _setupEntityEvents(element, imageData) {
     const onMouseDown = (e) => {
       if (e.button === 0) {
         e.preventDefault();
         e.stopPropagation();
-        this.startDrag(e, element, imageData);
+        this._startDrag(e, element, imageData);
       }
     };
 
@@ -358,18 +397,11 @@ class EntityManager {
     element.addEventListener('mousedown', onMouseDown);
     element.addEventListener('contextmenu', onContextMenu);
     element.addEventListener('dragstart', onDragStart);
-
-    element._cleanup = () => {
-      element.removeEventListener('mousedown', onMouseDown);
-      element.removeEventListener('contextmenu', onContextMenu);
-      element.removeEventListener('dragstart', onDragStart);
-      delete element._cleanup;
-    };
   }
 
-  startDrag(e, element, imageData) {
+  _startDrag(e, element, imageData) {
     const isMultiSelect = this.selectedEntities.has(imageData.id);
-    
+
     if (isMultiSelect) {
       this.dragState.isDragging = true;
       this.dragState.entity = element;
@@ -378,14 +410,14 @@ class EntityManager {
       this.dragState.startY = e.clientY;
       this.dragState.currentX = null;
       this.dragState.currentY = null;
-      
+
       this.dragState.initialPositions = {};
       this.selectedEntities.forEach(id => {
         const entity = this.entities.get(id);
         if (entity) {
-          this.dragState.initialPositions[id] = { 
-            x: entity.data.x, 
-            y: entity.data.y 
+          this.dragState.initialPositions[id] = {
+            x: entity.data.x,
+            y: entity.data.y
           };
           entity.element.classList.add('dragging');
         }
@@ -393,7 +425,7 @@ class EntityManager {
     } else {
       this.clearSelection();
       this.selectEntity(imageData.id);
-      
+
       this.dragState.isDragging = true;
       this.dragState.entity = element;
       this.dragState.imageData = imageData;
@@ -404,7 +436,7 @@ class EntityManager {
       this.dragState.currentX = null;
       this.dragState.currentY = null;
       this.dragState.initialPositions = null;
-      
+
       element.classList.add('dragging');
     }
   }
@@ -433,7 +465,7 @@ class EntityManager {
 
       this.dragState.entity.style.left = `${newX}px`;
       this.dragState.entity.style.top = `${newY}px`;
-      
+
       this.dragState.currentX = newX;
       this.dragState.currentY = newY;
     }
@@ -448,7 +480,7 @@ class EntityManager {
           const dy = this.dragState.currentY || 0;
           const newX = pos.x + dx;
           const newY = pos.y + dy;
-          
+
           entity.element.classList.remove('dragging');
           entity.data.x = newX;
           entity.data.y = newY;
@@ -457,17 +489,13 @@ class EntityManager {
       });
     } else if (this.dragState.entity && this.dragState.currentX !== null) {
       const id = this.dragState.entity.dataset.id;
-      this.projectManager.updateImage(id, { 
-        x: this.dragState.currentX, 
-        y: this.dragState.currentY 
+      this.projectManager.updateImage(id, {
+        x: this.dragState.currentX,
+        y: this.dragState.currentY
       });
       this.dragState.entity.classList.remove('dragging');
     }
-    this.dragState.isDragging = false;
-    this.dragState.entity = null;
-    this.dragState.currentX = null;
-    this.dragState.currentY = null;
-    this.dragState.initialPositions = null;
+    this.dragState = this._createDragState();
   }
 
   async deleteEntity(id) {
@@ -487,10 +515,10 @@ class EntityManager {
         }
       }
 
-      if (entity._cleanup) entity._cleanup();
       entity.element.remove();
       this.entities.delete(id);
       this.selectedEntities.delete(id);
+      this._dimensionCache.delete(id);
       this.projectManager.removeImage(id);
     }
   }
@@ -505,20 +533,18 @@ class EntityManager {
   async loadAllImages() {
     const config = this.projectManager.getConfig();
     const filesDir = await this.projectManager.getFilesDir();
-    console.log('[EntityManager] loadAllImages - filesDir:', filesDir);
-    
-    const BATCH_SIZE = 10;
+
     const images = config.images;
-    
-    for (let i = 0; i < images.length; i += BATCH_SIZE) {
-      const batch = images.slice(i, i + BATCH_SIZE);
-      
+    const batchSize = CONSTANTS.IMAGE_LOAD_BATCH_SIZE;
+
+    for (let i = 0; i < images.length; i += batchSize) {
+      const batch = images.slice(i, i + batchSize);
+
       await Promise.all(
         batch.map(async (imageData) => {
           const fullPath = await window.api.path.join(filesDir, imageData.name);
           const exists = await window.api.fs.exists(fullPath);
-          console.log('[EntityManager] Checking image:', fullPath, 'exists:', exists);
-          
+
           if (exists) {
             await this.createEntity(imageData);
           } else {
@@ -526,27 +552,27 @@ class EntityManager {
           }
         })
       );
-      
-      if (i + BATCH_SIZE < images.length) {
-        await new Promise(resolve => setTimeout(resolve, 50));
+
+      if (i + batchSize < images.length) {
+        await new Promise(resolve => setTimeout(resolve, CONSTANTS.IMAGE_LOAD_BATCH_DELAY_MS));
       }
     }
   }
 
   clearAll() {
-    this.entities.forEach(({ element, element: { _cleanup } }) => {
-      if (_cleanup) _cleanup();
+    this.entities.forEach(({ element }) => {
       element.remove();
     });
     this.entities.clear();
     this.selectedEntities.clear();
+    this._dimensionCache.clear();
   }
 
   selectEntity(id, addToSelection = false) {
     if (!addToSelection) {
       this.clearSelection();
     }
-    
+
     const entity = this.entities.get(id);
     if (entity) {
       this.selectedEntities.add(id);
@@ -596,7 +622,7 @@ class EntityManager {
   }
 
   attachImageToFrame(imageId, frameId, frameX, frameY) {
-    const img = this.projectManager.config.images.find(i => i.id === imageId);
+    const img = this.projectManager.getImageById(imageId);
     if (img) {
       img.frameId = frameId;
       img.x = frameX;
@@ -606,9 +632,9 @@ class EntityManager {
   }
 
   detachImageFromFrame(imageId) {
-    const img = this.projectManager.config.images.find(i => i.id === imageId);
+    const img = this.projectManager.getImageById(imageId);
     if (img && img.frameId) {
-      const frame = this.projectManager.config.frames.find(f => f.id === img.frameId);
+      const frame = this.projectManager.getFrameById(img.frameId);
       if (frame) {
         img.x = frame.x + (img.x - frame.x);
         img.y = frame.y + (img.y - frame.y);
@@ -623,13 +649,11 @@ class EntityManager {
     this.entities.forEach((entity, id) => {
       const x = entity.data.x;
       const y = entity.data.y;
-      const rectElem = entity.element.getBoundingClientRect();
-      const w = rectElem.width / this.camera.zoom * entity.data.scale;
-      const h = rectElem.height / this.camera.zoom * entity.data.scale;
+      const dims = this._getEntityDimensions(entity);
 
-      const intersects = !(rect.x > x + w || 
-                          rect.x + rect.width < x || 
-                          rect.y > y + h || 
+      const intersects = !(rect.x > x + dims.width ||
+                          rect.x + rect.width < x ||
+                          rect.y > y + dims.height ||
                           rect.y + rect.height < y);
 
       if (intersects) {
@@ -639,7 +663,7 @@ class EntityManager {
     return selected;
   }
 
-  getSelectionBoundsForAlignment() {
+  getSelectionBounds() {
     if (this.selectedEntities.size === 0) return null;
 
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
@@ -649,24 +673,18 @@ class EntityManager {
       if (entity) {
         const x = entity.data.x;
         const y = entity.data.y;
-        const naturalWidth = entity.element.naturalWidth || entity.element.offsetWidth;
-        const naturalHeight = entity.element.naturalHeight || entity.element.offsetHeight;
-        const w = naturalWidth * entity.data.scale;
-        const h = naturalHeight * entity.data.scale;
+        const dims = this._getEntityDimensions(entity);
 
         minX = Math.min(minX, x);
         minY = Math.min(minY, y);
-        maxX = Math.max(maxX, x + w);
-        maxY = Math.max(maxY, y + h);
+        maxX = Math.max(maxX, x + dims.width);
+        maxY = Math.max(maxY, y + dims.height);
       }
     });
 
     return { minX, minY, maxX, maxY, width: maxX - minX, height: maxY - minY };
   }
 }
-
-const FRAME_MIN_SIZE = 100;
-const FRAME_DEFAULT_SIZE = { width: 300, height: 200 };
 
 class FrameManager {
   constructor(camera, projectManager, canvasEl) {
@@ -675,8 +693,12 @@ class FrameManager {
     this.canvas = canvasEl;
     this.frames = new Map();
     this.selectedFrame = null;
+    this.resizeState = this._createResizeState();
+    this.dragState = this._createDragState();
+  }
 
-    this.resizeState = {
+  _createResizeState() {
+    return {
       isResizing: false,
       frame: null,
       handle: null,
@@ -687,8 +709,10 @@ class FrameManager {
       startFrameX: 0,
       startFrameY: 0
     };
+  }
 
-    this.dragState = {
+  _createDragState() {
+    return {
       isDragging: false,
       frame: null,
       startX: 0,
@@ -715,7 +739,7 @@ class FrameManager {
     labelEl.dataset.frameId = frameData.id;
     frameEl.appendChild(labelEl);
 
-    this.setupLabelEvents(labelEl, frameData);
+    this._setupLabelEvents(labelEl, frameData);
 
     const handles = ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'];
     for (const handle of handles) {
@@ -731,7 +755,7 @@ class FrameManager {
     frameEl.style.height = `${frameData.height}px`;
     frameEl.style.zIndex = frameData.zIndex || 0;
 
-    this.setupFrameEvents(frameEl, frameData);
+    this._setupFrameEvents(frameEl, frameData);
 
     this.canvas.appendChild(frameEl);
     this.frames.set(frameData.id, { element: frameEl, data: frameData });
@@ -739,7 +763,7 @@ class FrameManager {
     return frameEl;
   }
 
-  setupLabelEvents(labelEl, frameData) {
+  _setupLabelEvents(labelEl, frameData) {
     const onBlur = () => {
       const newName = labelEl.textContent.trim();
       if (newName !== frameData.name) {
@@ -771,16 +795,9 @@ class FrameManager {
     labelEl.addEventListener('blur', onBlur);
     labelEl.addEventListener('keydown', onKeyDown);
     labelEl.addEventListener('focus', onFocus);
-
-    labelEl._cleanupLabel = () => {
-      labelEl.removeEventListener('blur', onBlur);
-      labelEl.removeEventListener('keydown', onKeyDown);
-      labelEl.removeEventListener('focus', onFocus);
-      delete labelEl._cleanupLabel;
-    };
   }
 
-  setupFrameEvents(frameEl, frameData) {
+  _setupFrameEvents(frameEl, frameData) {
     const onMouseDown = (e) => {
       if (e.target.classList.contains('frame-label')) {
         return;
@@ -788,12 +805,12 @@ class FrameManager {
       if (e.button === 0 && e.target.classList.contains('frame-handle')) {
         e.preventDefault();
         e.stopPropagation();
-        this.startResize(e, frameEl, frameData, e.target.dataset.handle);
+        this._startResize(e, frameEl, frameData, e.target.dataset.handle);
       } else if (e.button === 0 && !e.target.classList.contains('frame-handle')) {
         e.preventDefault();
         e.stopPropagation();
         this.selectFrame(frameEl, frameData);
-        this.startDrag(e, frameEl, frameData);
+        this._startDrag(e, frameEl, frameData);
       }
     };
 
@@ -805,12 +822,6 @@ class FrameManager {
 
     frameEl.addEventListener('mousedown', onMouseDown);
     frameEl.addEventListener('contextmenu', onContextMenu);
-
-    frameEl._cleanup = () => {
-      frameEl.removeEventListener('mousedown', onMouseDown);
-      frameEl.removeEventListener('contextmenu', onContextMenu);
-      delete frameEl._cleanup;
-    };
   }
 
   selectFrame(frameEl, frameData) {
@@ -828,9 +839,9 @@ class FrameManager {
     }
   }
 
-  startResize(e, frameEl, frameData, handle) {
+  _startResize(e, frameEl, frameData, handle) {
     if (frameData.locked) return;
-    
+
     this.resizeState.isResizing = true;
     this.resizeState.frame = frameEl;
     this.resizeState.handle = handle;
@@ -857,18 +868,18 @@ class FrameManager {
     let newY = this.resizeState.startFrameY;
 
     if (handle.includes('e')) {
-      newWidth = Math.max(FRAME_MIN_SIZE, this.resizeState.startWidth + dx);
+      newWidth = Math.max(CONSTANTS.FRAME_MIN_SIZE, this.resizeState.startWidth + dx);
     }
     if (handle.includes('w')) {
-      const widthChange = Math.min(dx, this.resizeState.startWidth - FRAME_MIN_SIZE);
+      const widthChange = Math.min(dx, this.resizeState.startWidth - CONSTANTS.FRAME_MIN_SIZE);
       newWidth = this.resizeState.startWidth - widthChange;
       newX = this.resizeState.startFrameX + widthChange;
     }
     if (handle.includes('s')) {
-      newHeight = Math.max(FRAME_MIN_SIZE, this.resizeState.startHeight + dy);
+      newHeight = Math.max(CONSTANTS.FRAME_MIN_SIZE, this.resizeState.startHeight + dy);
     }
     if (handle.includes('n')) {
-      const heightChange = Math.min(dy, this.resizeState.startHeight - FRAME_MIN_SIZE);
+      const heightChange = Math.min(dy, this.resizeState.startHeight - CONSTANTS.FRAME_MIN_SIZE);
       newHeight = this.resizeState.startHeight - heightChange;
       newY = this.resizeState.startFrameY + heightChange;
     }
@@ -896,16 +907,12 @@ class FrameManager {
       this.resizeState.frame.classList.remove('resizing');
     }
 
-    this.resizeState.isResizing = false;
-    this.resizeState.frame = null;
-    this.resizeState.handle = null;
-    this.resizeState.currentWidth = null;
-    this.resizeState.currentHeight = null;
+    this.resizeState = this._createResizeState();
   }
 
-  startDrag(e, frameEl, frameData) {
+  _startDrag(e, frameEl, frameData) {
     if (frameData.locked) return;
-    
+
     this.dragState.isDragging = true;
     this.dragState.frame = frameEl;
     this.dragState.startX = e.clientX;
@@ -942,10 +949,7 @@ class FrameManager {
       this.dragState.frame.classList.remove('dragging');
     }
 
-    this.dragState.isDragging = false;
-    this.dragState.frame = null;
-    this.dragState.currentX = null;
-    this.dragState.currentY = null;
+    this.dragState = this._createDragState();
   }
 
   async loadAllFrames() {
@@ -956,8 +960,7 @@ class FrameManager {
   }
 
   clearAll() {
-    this.frames.forEach(({ element, element: { _cleanup } }) => {
-      if (_cleanup) _cleanup();
+    this.frames.forEach(({ element }) => {
       element.remove();
     });
     this.frames.clear();
@@ -971,7 +974,6 @@ class FrameManager {
   deleteFrame(id) {
     const frame = this.frames.get(id);
     if (frame) {
-      const frameData = frame.data;
       const config = this.projectManager.getConfig();
 
       config.images.forEach(img => {
@@ -981,7 +983,6 @@ class FrameManager {
         }
       });
 
-      if (frame._cleanup) frame._cleanup();
       frame.element.remove();
       this.frames.delete(id);
       this.projectManager.removeFrame(id);
@@ -999,8 +1000,8 @@ class FrameManager {
       name: `Frame ${this.frames.size + 1}`,
       x: 200,
       y: 200,
-      width: FRAME_DEFAULT_SIZE.width,
-      height: FRAME_DEFAULT_SIZE.height,
+      width: CONSTANTS.FRAME_DEFAULT_SIZE.width,
+      height: CONSTANTS.FRAME_DEFAULT_SIZE.height,
       zIndex: 0,
       locked: false,
       imageIds: []
@@ -1067,139 +1068,31 @@ class App {
     };
 
     this.lastWheelTime = 0;
-    this.boundHandlers = {
-      handleWheel: this.handleWheel.bind(this),
-      handleMouseDown: this.handleMouseDown.bind(this),
-      handleMouseMove: this.handleMouseMove.bind(this),
-      handleMouseUp: this.handleMouseUp.bind(this),
-      handleKeyDown: this.handleKeyDown.bind(this),
-      handleKeyUp: this.handleKeyUp.bind(this),
-      handleDragOver: this.handleDragOver.bind(this),
-      handleDrop: this.handleDrop.bind(this)
+    this.memoryCheckInterval = null;
+    this.boundHandlers = this._createBoundHandlers();
+
+    this._setupEventListeners();
+    this._startMemoryMonitoring();
+    this._loadRecentProjects();
+    this._updateCanvasTransform();
+  }
+
+  _createBoundHandlers() {
+    return {
+      handleWheel: this._handleWheel.bind(this),
+      handleMouseDown: this._handleMouseDown.bind(this),
+      handleMouseMove: this._handleMouseMove.bind(this),
+      handleMouseUp: this._handleMouseUp.bind(this),
+      handleKeyDown: this._handleKeyDown.bind(this),
+      handleKeyUp: this._handleKeyUp.bind(this),
+      handleDragOver: this._handleDragOver.bind(this),
+      handleDrop: this._handleDrop.bind(this)
     };
-
-    this.setupEventListeners();
-    this.loadRecentProjects();
-    this.updateCanvasTransform();
   }
 
-  async loadRecentProjects() {
-    const projects = await window.api.recentProjects.validate();
-    this.renderRecentProjects(projects);
-  }
-
-  renderRecentProjects(projects) {
-    if (!this.recentProjectsList) return;
-    
-    this.recentProjectsList.innerHTML = '';
-    
-    const folderIcon = `<svg class="recent-project-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-      <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
-    </svg>`;
-    
-    projects.forEach(project => {
-      const item = document.createElement('div');
-      item.className = 'recent-project-item';
-      
-      const icon = document.createElement('div');
-      icon.innerHTML = folderIcon;
-      icon.className = 'recent-project-icon';
-      
-      const info = document.createElement('div');
-      info.className = 'recent-project-info';
-      
-      const name = document.createElement('div');
-      name.className = 'recent-project-name';
-      name.textContent = project.path.split(/[/\\]/).pop();
-      
-      const pathEl = document.createElement('div');
-      pathEl.className = 'recent-project-path';
-      pathEl.textContent = project.path;
-      
-      const date = document.createElement('div');
-      date.className = 'recent-project-date';
-      date.textContent = this.formatDate(project.openedAt);
-      
-      info.appendChild(name);
-      info.appendChild(pathEl);
-      info.appendChild(date);
-      
-      item.appendChild(icon);
-      item.appendChild(info);
-      
-      item.addEventListener('click', () => {
-        this.openRecentProject(project.path);
-      });
-      
-      this.recentProjectsList.appendChild(item);
-    });
-  }
-
-  formatDate(timestamp) {
-    const now = Date.now();
-    const diff = now - timestamp;
-    const minutes = Math.floor(diff / 60000);
-    const hours = Math.floor(diff / 3600000);
-    const days = Math.floor(diff / 86400000);
-    
-    if (minutes < 1) return 'Just now';
-    if (minutes < 60) return `${minutes} min ago`;
-    if (hours < 24) return `${hours} hour${hours > 1 ? 's' : ''} ago`;
-    if (days === 1) return 'Yesterday';
-    if (days < 7) return `${days} days ago`;
-    return new Date(timestamp).toLocaleDateString();
-  }
-
-  async openRecentProject(path) {
-    console.log('[App] openRecentProject called with:', path);
-    const exists = await window.api.fs.exists(path);
-    console.log('[App] Path exists:', exists);
-    if (!exists) {
-      console.log('[App] Path does not exist, removing from recent');
-      await window.api.recentProjects.remove(path);
-      await this.loadRecentProjects();
-      return;
-    }
-
-    console.log('[App] Calling openProjectByPath...');
-    const success = await this.projectManager.openProjectByPath(path);
-    console.log('[App] openProjectByPath result:', success);
-    if (!success) {
-      console.log('[App] Failed to open project');
-      return;
-    }
-
-    await window.api.recentProjects.add(path);
-    await this.loadRecentProjects();
-
-    this.welcomeOverlay.classList.remove('active');
-    this.statusProject.textContent = path;
-
-    const config = this.projectManager.getConfig();
-    this.camera.setState(config.canvas);
-    this.updateCanvasTransform();
-
-    await this.entityManager.loadAllImages();
-    await this.frameManager.loadAllFrames();
-    this.repositionImagesInFrames();
-  }
-
-  setupEventListeners() {
-    this.btnOpenProject.addEventListener('click', () => this.openProject());
-    this.btnNewProject.addEventListener('click', () => this.createNewProject());
-
-    this.viewport.addEventListener('wheel', this.boundHandlers.handleWheel, { passive: false });
-    this.viewport.addEventListener('mousedown', this.boundHandlers.handleMouseDown);
-    this.viewport.addEventListener('dragover', this.boundHandlers.handleDragOver);
-    this.viewport.addEventListener('drop', this.boundHandlers.handleDrop);
-
-    document.addEventListener('mousemove', this.boundHandlers.handleMouseMove);
-    document.addEventListener('mouseup', this.boundHandlers.handleMouseUp);
-    document.addEventListener('keydown', this.boundHandlers.handleKeyDown);
-    document.addEventListener('keyup', this.boundHandlers.handleKeyUp);
-
+  _startMemoryMonitoring() {
     if (window.performance && window.performance.memory) {
-      setInterval(() => {
+      this.memoryCheckInterval = setInterval(() => {
         const mem = window.performance.memory;
         const usedMB = Math.round(mem.usedJSHeapSize / 1048576);
         const totalMB = Math.round(mem.jsHeapSizeLimit / 1048576);
@@ -1210,50 +1103,157 @@ class App {
     }
   }
 
-  async ensureProjectOpen() {
+  async _loadRecentProjects() {
+    const projects = await window.api.recentProjects.validate();
+    this._renderRecentProjects(projects);
+  }
+
+  _renderRecentProjects(projects) {
+    if (!this.recentProjectsList) return;
+
+    this.recentProjectsList.innerHTML = '';
+
+    const folderIcon = `<svg class="recent-project-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+    </svg>`;
+
+    projects.forEach(project => {
+      const item = document.createElement('div');
+      item.className = 'recent-project-item';
+
+      const icon = document.createElement('div');
+      icon.innerHTML = folderIcon;
+      icon.className = 'recent-project-icon';
+
+      const info = document.createElement('div');
+      info.className = 'recent-project-info';
+
+      const name = document.createElement('div');
+      name.className = 'recent-project-name';
+      name.textContent = project.path.split(/[/\\]/).pop();
+
+      const pathEl = document.createElement('div');
+      pathEl.className = 'recent-project-path';
+      pathEl.textContent = project.path;
+
+      const date = document.createElement('div');
+      date.className = 'recent-project-date';
+      date.textContent = this._formatDate(project.openedAt);
+
+      info.appendChild(name);
+      info.appendChild(pathEl);
+      info.appendChild(date);
+
+      item.appendChild(icon);
+      item.appendChild(info);
+
+      item.addEventListener('click', () => {
+        this._openRecentProject(project.path);
+      });
+
+      this.recentProjectsList.appendChild(item);
+    });
+  }
+
+  _formatDate(timestamp) {
+    const now = Date.now();
+    const diff = now - timestamp;
+    const minutes = Math.floor(diff / 60000);
+    const hours = Math.floor(diff / 3600000);
+    const days = Math.floor(diff / 86400000);
+
+    if (minutes < 1) return 'Just now';
+    if (minutes < 60) return `${minutes} min ago`;
+    if (hours < 24) return `${hours} hour${hours > 1 ? 's' : ''} ago`;
+    if (days === 1) return 'Yesterday';
+    if (days < 7) return `${days} days ago`;
+    return new Date(timestamp).toLocaleDateString();
+  }
+
+  async _openRecentProject(path) {
+    const exists = await window.api.fs.exists(path);
+    if (!exists) {
+      await window.api.recentProjects.remove(path);
+      await this._loadRecentProjects();
+      return;
+    }
+
+    const success = await this.projectManager.openProjectByPath(path);
+    if (!success) {
+      return;
+    }
+
+    await window.api.recentProjects.add(path);
+    await this._loadRecentProjects();
+
+    this.welcomeOverlay.classList.remove('active');
+    this.statusProject.textContent = path;
+
+    const config = this.projectManager.getConfig();
+    this.camera.setState(config.canvas);
+    this._updateCanvasTransform();
+
+    await this.entityManager.loadAllImages();
+    await this.frameManager.loadAllFrames();
+    this._repositionImagesInFrames();
+  }
+
+  _setupEventListeners() {
+    this.btnOpenProject.addEventListener('click', () => this._openProject());
+    this.btnNewProject.addEventListener('click', () => this._createNewProject());
+
+    this.viewport.addEventListener('wheel', this.boundHandlers.handleWheel, { passive: false });
+    this.viewport.addEventListener('mousedown', this.boundHandlers.handleMouseDown);
+    this.viewport.addEventListener('dragover', this.boundHandlers.handleDragOver);
+    this.viewport.addEventListener('drop', this.boundHandlers.handleDrop);
+
+    document.addEventListener('mousemove', this.boundHandlers.handleMouseMove);
+    document.addEventListener('mouseup', this.boundHandlers.handleMouseUp);
+    document.addEventListener('keydown', this.boundHandlers.handleKeyDown);
+    document.addEventListener('keyup', this.boundHandlers.handleKeyUp);
+  }
+
+  async _ensureProjectOpen() {
     if (this.projectManager.getProjectPath()) {
-      console.log('[App] Project already open:', this.projectManager.getProjectPath());
       return true;
     }
 
-    console.log('[App] No project open, opening dialog...');
     const path = await this.projectManager.openProject();
-    console.log('[App] Project opened:', path);
     if (!path) return false;
 
     this.welcomeOverlay.classList.remove('active');
     this.statusProject.textContent = path;
-    
+
     const config = this.projectManager.getConfig();
     this.camera.setState(config.canvas);
-    this.updateCanvasTransform();
-    
+    this._updateCanvasTransform();
+
     await this.entityManager.loadAllImages();
     await this.frameManager.loadAllFrames();
-    this.repositionImagesInFrames();
+    this._repositionImagesInFrames();
     return true;
   }
 
-  async openProject() {
+  async _openProject() {
     const path = await this.projectManager.openProject();
     if (!path) return;
 
     await window.api.recentProjects.add(path);
-    await this.loadRecentProjects();
+    await this._loadRecentProjects();
 
     this.welcomeOverlay.classList.remove('active');
     this.statusProject.textContent = path;
 
     const config = this.projectManager.getConfig();
     this.camera.setState(config.canvas);
-    this.updateCanvasTransform();
+    this._updateCanvasTransform();
 
     await this.entityManager.loadAllImages();
     await this.frameManager.loadAllFrames();
-    this.repositionImagesInFrames();
+    this._repositionImagesInFrames();
   }
 
-  async createNewProject() {
+  async _createNewProject() {
     const path = await window.api.dialog.openDirectory();
     if (!path) return;
 
@@ -1261,16 +1261,16 @@ class App {
     await window.api.fs.mkdir(filesDir);
 
     const config = {
-      canvas: { cx: 0, cy: 0, zoom: 1 },
+      canvas: { cx: 0, cy: 0, zoom: CONSTANTS.DEFAULT_ZOOM },
       images: [],
       frames: []
     };
-    
+
     const configPath = await window.api.path.join(path, 'config.json');
     await window.api.fs.writeFile(configPath, JSON.stringify(config, null, 2));
 
     await window.api.recentProjects.add(path);
-    await this.loadRecentProjects();
+    await this._loadRecentProjects();
 
     this.welcomeOverlay.classList.remove('active');
     this.statusProject.textContent = path;
@@ -1278,65 +1278,48 @@ class App {
     this.projectManager.setProjectPath(path);
     this.projectManager.setConfig(config);
     this.camera.setState(config.canvas);
-    this.updateCanvasTransform();
+    this._updateCanvasTransform();
   }
 
-  alignSelected(direction) {
-    const entityManager = this.entityManager;
-    const selectedIds = entityManager.getSelectedIds();
-    
-    if (selectedIds.length < 2) return;
-    
-    const bounds = entityManager.getSelectionBoundsForAlignment();
+  _alignSelected(direction) {
+    const bounds = this.entityManager.getSelectionBounds();
     if (!bounds) return;
 
-    selectedIds.forEach(id => {
-      const entity = entityManager.getEntity(id);
+    this.entityManager.getSelectedIds().forEach(id => {
+      const entity = this.entityManager.getEntity(id);
       if (!entity) return;
 
-      const x = entity.data.x;
-      const y = entity.data.y;
-      const naturalWidth = entity.element.naturalWidth || entity.element.offsetWidth;
-      const naturalHeight = entity.element.naturalHeight || entity.element.offsetHeight;
-      const w = naturalWidth * entity.data.scale;
-      const h = naturalHeight * entity.data.scale;
-
-      let newX = x;
-      let newY = y;
+      const dims = this.entityManager._getEntityDimensions(entity);
+      let newX = entity.data.x;
+      let newY = entity.data.y;
 
       if (direction === 'left') {
         newX = bounds.minX;
       } else if (direction === 'right') {
-        newX = bounds.maxX - w;
+        newX = bounds.maxX - dims.width;
       } else if (direction === 'top') {
         newY = bounds.minY;
       } else if (direction === 'bottom') {
-        newY = bounds.maxY - h;
+        newY = bounds.maxY - dims.height;
       }
 
       entity.data.x = newX;
       entity.data.y = newY;
       entity.element.style.left = `${newX}px`;
       entity.element.style.top = `${newY}px`;
-      entityManager.projectManager.updateImage(id, { x: newX, y: newY });
+      this.projectManager.updateImage(id, { x: newX, y: newY });
     });
   }
 
-  distributeHorizontally() {
-    const entityManager = this.entityManager;
-    const selectedIds = entityManager.getSelectedIds();
-    
-    if (selectedIds.length < 2) return;
-    
-    const entities = selectedIds
-      .map(id => entityManager.getEntity(id))
+  _distributeHorizontally() {
+    const entities = this.entityManager.getSelectedIds()
+      .map(id => this.entityManager.getEntity(id))
       .filter(e => e)
       .map(e => ({
         id: e.data.id,
         x: e.data.x,
         y: e.data.y,
-        width: (e.element.naturalWidth || e.element.offsetWidth) * e.data.scale,
-        height: (e.element.naturalHeight || e.element.offsetHeight) * e.data.scale
+        dims: this.entityManager._getEntityDimensions(e)
       }));
 
     if (entities.length < 2) return;
@@ -1348,36 +1331,21 @@ class App {
     entities.forEach(entity => {
       entity.x = currentX;
       entity.y = minY;
-      currentX += entity.width + 50;
+      currentX += entity.dims.width + CONSTANTS.DISTRIBUTE_GAP;
     });
 
-    entities.forEach(entity => {
-      const el = entityManager.getEntity(entity.id);
-      if (el) {
-        el.data.x = entity.x;
-        el.data.y = entity.y;
-        el.element.style.left = `${entity.x}px`;
-        el.element.style.top = `${entity.y}px`;
-        entityManager.projectManager.updateImage(entity.id, { x: entity.x, y: entity.y });
-      }
-    });
+    this._applyEntityPositions(entities);
   }
 
-  distributeVertically() {
-    const entityManager = this.entityManager;
-    const selectedIds = entityManager.getSelectedIds();
-    
-    if (selectedIds.length < 2) return;
-    
-    const entities = selectedIds
-      .map(id => entityManager.getEntity(id))
+  _distributeVertically() {
+    const entities = this.entityManager.getSelectedIds()
+      .map(id => this.entityManager.getEntity(id))
       .filter(e => e)
       .map(e => ({
         id: e.data.id,
         x: e.data.x,
         y: e.data.y,
-        width: (e.element.naturalWidth || e.element.offsetWidth) * e.data.scale,
-        height: (e.element.naturalHeight || e.element.offsetHeight) * e.data.scale
+        dims: this.entityManager._getEntityDimensions(e)
       }));
 
     if (entities.length < 2) return;
@@ -1389,66 +1357,55 @@ class App {
     entities.forEach(entity => {
       entity.x = minX;
       entity.y = currentY;
-      currentY += entity.height + 50;
+      currentY += entity.dims.height + CONSTANTS.DISTRIBUTE_GAP;
     });
 
-    entities.forEach(entity => {
-      const el = entityManager.getEntity(entity.id);
-      if (el) {
-        el.data.x = entity.x;
-        el.data.y = entity.y;
-        el.element.style.left = `${entity.x}px`;
-        el.element.style.top = `${entity.y}px`;
-        entityManager.projectManager.updateImage(entity.id, { x: entity.x, y: entity.y });
-      }
-    });
+    this._applyEntityPositions(entities);
   }
 
-  distributeToGrid() {
-    const entityManager = this.entityManager;
-    const selectedIds = entityManager.getSelectedIds();
-    
-    if (selectedIds.length < 2) return;
-    
-    const entities = selectedIds
-      .map(id => entityManager.getEntity(id))
+  _distributeToGrid() {
+    const entities = this.entityManager.getSelectedIds()
+      .map(id => this.entityManager.getEntity(id))
       .filter(e => e)
       .map(e => ({
         id: e.data.id,
         x: e.data.x,
         y: e.data.y,
-        width: (e.element.naturalWidth || e.element.offsetWidth) * e.data.scale,
-        height: (e.element.naturalHeight || e.element.offsetHeight) * e.data.scale
+        dims: this.entityManager._getEntityDimensions(e)
       }));
 
     if (entities.length < 2) return;
 
     const startX = entities[0].x;
     const startY = entities[0].y;
-    const GAP = 50;
-    const COLS = 4;
+    const cols = CONSTANTS.DISTRIBUTE_GRID_COLS;
+    const gap = CONSTANTS.DISTRIBUTE_GAP;
 
     entities.forEach((entity, index) => {
-      const row = Math.floor(index / COLS);
-      const col = index % COLS;
-      
-      entity.x = startX + col * (entity.width + GAP);
-      entity.y = startY + row * (entity.height + GAP);
+      const row = Math.floor(index / cols);
+      const col = index % cols;
+
+      entity.x = startX + col * (entity.dims.width + gap);
+      entity.y = startY + row * (entity.dims.height + gap);
     });
 
+    this._applyEntityPositions(entities);
+  }
+
+  _applyEntityPositions(entities) {
     entities.forEach(entity => {
-      const el = entityManager.getEntity(entity.id);
+      const el = this.entityManager.getEntity(entity.id);
       if (el) {
         el.data.x = entity.x;
         el.data.y = entity.y;
         el.element.style.left = `${entity.x}px`;
         el.element.style.top = `${entity.y}px`;
-        entityManager.projectManager.updateImage(entity.id, { x: entity.x, y: entity.y });
+        this.projectManager.updateImage(entity.id, { x: entity.x, y: entity.y });
       }
     });
   }
 
-  repositionImagesInFrames() {
+  _repositionImagesInFrames() {
     const config = this.projectManager.getConfig();
     config.images.forEach(img => {
       if (img.frameId) {
@@ -1467,67 +1424,61 @@ class App {
     });
   }
 
-  async addImages() {
-    console.log('[App] addImages() called');
+  async _addImages() {
     try {
-      const hasProject = await this.ensureProjectOpen();
-      console.log('[App] Project open:', hasProject);
+      const hasProject = await this._ensureProjectOpen();
       if (!hasProject) return;
 
       const filePaths = await window.api.dialog.openFiles();
-      console.log('[App] File paths returned:', filePaths);
       if (!filePaths || filePaths.length === 0) {
-        console.log('[App] No files selected or dialog canceled');
         return;
       }
 
       for (const filePath of filePaths) {
-        console.log('[App] Processing file:', filePath);
-        const result = await this.entityManager.addImageFromFile(filePath);
-        console.log('[App] File added result:', result);
+        await this.entityManager.addImageFromFile(filePath);
       }
 
-      this.updateCanvasTransform();
+      this._updateCanvasTransform();
     } catch (error) {
       console.error('[App] Error in addImages():', error);
     }
   }
 
-  handleWheel(e) {
+  _handleWheel(e) {
     e.preventDefault();
 
     const now = performance.now();
-    if (now - this.lastWheelTime < WHEEL_THROTTLE_MS) return;
+    if (now - this.lastWheelTime < CONSTANTS.WHEEL_THROTTLE_MS) return;
     this.lastWheelTime = now;
 
     const rect = this.viewport.getBoundingClientRect();
     this.camera.zoomToPoint(e.deltaY, e.clientX, e.clientY, rect);
-    this.updateCanvasTransform();
+    this._updateCanvasTransform();
     this.projectManager.updateCanvas(this.camera.getState());
-    this.updateStatus();
+    this._updateStatus();
   }
 
-  handleMouseDown(e) {
+  _handleMouseDown(e) {
     if (e.button === 1 || (e.button === 0 && this.panState.spacePressed)) {
       e.preventDefault();
-      this.startPan(e);
+      this._startPan(e);
     } else if (e.button === 0) {
       const targetIsEntity = e.target.classList.contains('canvas-image');
       const targetIsFrame = e.target.closest('.frame-container');
-      const targetIsCanvas = e.target === this.canvas || 
+      const targetIsCanvas = e.target === this.canvas ||
                              e.target === this.viewport ||
                              this.canvas.contains(e.target);
-      
+
       if (targetIsCanvas && !targetIsEntity && !targetIsFrame) {
         this.entityManager.clearSelection();
         this.entityManager.endDrag();
         this.frameManager.deselectFrame();
-        this.startSelection(e);
+        this._startSelection(e);
       }
     }
   }
 
-  startSelection(e) {
+  _startSelection(e) {
     const rect = this.viewport.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
@@ -1551,7 +1502,7 @@ class App {
     this.selectionState.rectElement.style.display = 'block';
   }
 
-  updateSelection(e) {
+  _updateSelection(e) {
     if (!this.selectionState.isSelecting) return;
 
     const viewportRect = this.viewport.getBoundingClientRect();
@@ -1577,7 +1528,7 @@ class App {
     this.selectionState.rectElement.style.height = `${height}px`;
   }
 
-  endSelection() {
+  _endSelection() {
     if (!this.selectionState.isSelecting) return;
 
     this.selectionState.isSelecting = false;
@@ -1591,7 +1542,7 @@ class App {
     const width = Math.abs(this.selectionState.currentX - this.selectionState.startX);
     const height = Math.abs(this.selectionState.currentY - this.selectionState.startY);
 
-    if (width > 5 || height > 5) {
+    if (width > CONSTANTS.SELECTION_MIN_SIZE || height > CONSTANTS.SELECTION_MIN_SIZE) {
       const viewportRect = this.viewport.getBoundingClientRect();
       const selRect = {
         x: (left - viewportRect.left - this.camera.cx) / this.camera.zoom,
@@ -1601,7 +1552,7 @@ class App {
       };
 
       const selectedIds = this.entityManager.getEntitiesInRect(selRect);
-      
+
       if (selectedIds.length > 0) {
         this.entityManager.clearSelection();
         selectedIds.forEach(id => this.entityManager.selectEntity(id, true));
@@ -1609,16 +1560,11 @@ class App {
     }
   }
 
-  updateSelectionBounds() {
-    // Bounding box removed - selection is now per-object only
-    // Each selected image has its own .selected class with outline
-  }
-
-  handleMouseMove(e) {
+  _handleMouseMove(e) {
     if (this.panState.isPanning) {
-      this.updatePan(e);
+      this._updatePan(e);
     } else if (this.selectionState.isSelecting) {
-      this.updateSelection(e);
+      this._updateSelection(e);
     } else if (this.frameManager.resizeState.isResizing) {
       this.frameManager.handleResize(e);
     } else if (this.frameManager.dragState.isDragging) {
@@ -1628,12 +1574,12 @@ class App {
     }
   }
 
-  handleMouseUp() {
+  _handleMouseUp() {
     if (this.panState.isPanning) {
-      this.endPan();
+      this._endPan();
     }
     if (this.selectionState.isSelecting) {
-      this.endSelection();
+      this._endSelection();
     }
     if (this.frameManager.resizeState.isResizing) {
       this.frameManager.endResize();
@@ -1644,7 +1590,7 @@ class App {
     this.entityManager.endDrag();
   }
 
-  async handleKeyDown(e) {
+  async _handleKeyDown(e) {
     if (e.code === 'Space' && !this.panState.spacePressed) {
       this.panState.spacePressed = true;
       this.viewport.classList.add('pan-mode');
@@ -1670,20 +1616,20 @@ class App {
     } else if (e.code === 'Digit0' && (e.ctrlKey || e.metaKey)) {
       e.preventDefault();
       this.camera.reset();
-      this.updateCanvasTransform();
+      this._updateCanvasTransform();
       this.projectManager.updateCanvas(this.camera.getState());
-      this.updateStatus();
+      this._updateStatus();
     }
   }
 
-  handleKeyUp(e) {
+  _handleKeyUp(e) {
     if (e.code === 'Space') {
       this.panState.spacePressed = false;
       this.viewport.classList.remove('pan-mode');
     }
   }
 
-  handleDragOver(e) {
+  _handleDragOver(e) {
     e.preventDefault();
 
     const frameEl = e.target.closest('.frame-container');
@@ -1698,7 +1644,7 @@ class App {
     });
   }
 
-  async handleDrop(e) {
+  async _handleDrop(e) {
     e.preventDefault();
 
     document.querySelectorAll('.frame-container').forEach(el => {
@@ -1707,14 +1653,14 @@ class App {
 
     const frameEl = e.target.closest('.frame-container');
     const files = Array.from(e.dataTransfer.files);
-    
-    const hasProject = await this.ensureProjectOpen();
+
+    const hasProject = await this._ensureProjectOpen();
     if (!hasProject) return;
 
     if (files.length > 0) {
       for (const file of files) {
         const ext = '.' + file.name.split('.').pop().toLowerCase();
-        if (IMAGE_EXTENSIONS.includes(ext)) {
+        if (CONSTANTS.IMAGE_EXTENSIONS.includes(ext)) {
           const imageData = await this.entityManager.addImageFromFile(file.path);
           if (frameEl && imageData) {
             const frameId = frameEl.dataset.id;
@@ -1724,7 +1670,7 @@ class App {
               const dropX = (e.clientX - rect.left) / this.camera.zoom;
               const dropY = (e.clientY - rect.top) / this.camera.zoom;
 
-              this.attachImageToFrame(imageData.id, frameId, frame.data.x + dropX, frame.data.y + dropY, frameEl);
+              this._attachImageToFrame(imageData.id, frameId, frame.data.x + dropX, frame.data.y + dropY, frameEl);
             }
           }
         }
@@ -1739,15 +1685,15 @@ class App {
           const dropX = (e.clientX - rect.left) / this.camera.zoom;
           const dropY = (e.clientY - rect.top) / this.camera.zoom;
 
-          this.attachImageToFrame(imageId, frameId, frame.data.x + dropX, frame.data.y + dropY, frameEl);
+          this._attachImageToFrame(imageId, frameId, frame.data.x + dropX, frame.data.y + dropY, frameEl);
         }
       }
     }
 
-    this.updateCanvasTransform();
+    this._updateCanvasTransform();
   }
 
-  async attachImageToFrame(imageId, frameId, canvasX, canvasY, frameEl) {
+  _attachImageToFrame(imageId, frameId, canvasX, canvasY, frameEl) {
     const entity = this.entityManager.getEntity(imageId);
     if (!entity) return;
 
@@ -1763,7 +1709,7 @@ class App {
     this.entityManager.attachImageToFrame(imageId, frameId, canvasX, canvasY);
   }
 
-  startPan(e) {
+  _startPan(e) {
     this.panState.isPanning = true;
     this.panState.startX = e.clientX;
     this.panState.startY = e.clientY;
@@ -1772,52 +1718,52 @@ class App {
     this.viewport.classList.add('panning');
   }
 
-  updatePan(e) {
+  _updatePan(e) {
     const dx = e.clientX - this.panState.startX;
     const dy = e.clientY - this.panState.startY;
 
     this.camera.cx = this.panState.startCx + dx;
     this.camera.cy = this.panState.startCy + dy;
 
-    this.updateCanvasTransform();
+    this._updateCanvasTransform();
   }
 
-  endPan() {
+  _endPan() {
     this.panState.isPanning = false;
     this.viewport.classList.remove('panning');
     this.projectManager.updateCanvas(this.camera.getState());
   }
 
-  updateCanvasTransform() {
+  _updateCanvasTransform() {
     this.camera.applyToElement(this.canvas);
-    this.updateStatus();
+    this._updateStatus();
   }
 
-  updateStatus() {
+  _updateStatus() {
     this.statusZoom.textContent = `${Math.round(this.camera.zoom * 100)}%`;
   }
 
-  resetZoom() {
+  _resetZoom() {
     this.camera.reset();
-    this.updateCanvasTransform();
+    this._updateCanvasTransform();
     this.projectManager.updateCanvas(this.camera.getState());
-    this.updateStatus();
+    this._updateStatus();
   }
 
-  async createFrame() {
-    const hasProject = await this.ensureProjectOpen();
+  async _createFrame() {
+    const hasProject = await this._ensureProjectOpen();
     if (!hasProject) return;
     await this.frameManager.addFrame();
   }
 
-  deleteSelectedFrame() {
+  _deleteSelectedFrame() {
     if (this.frameManager.selectedFrame) {
       const id = this.frameManager.selectedFrame.dataset.id;
       this.frameManager.deleteFrame(id);
     }
   }
 
-  clearSelectedFrame() {
+  _clearSelectedFrame() {
     if (this.frameManager.selectedFrame) {
       const id = this.frameManager.selectedFrame.dataset.id;
       this.frameManager.clearFrame(id);
@@ -1838,7 +1784,7 @@ class App {
     }
   }
 
-  bringSelectedFrameToFront() {
+  _bringSelectedFrameToFront() {
     if (this.frameManager.selectedFrame) {
       const id = this.frameManager.selectedFrame.dataset.id;
       const frame = this.frameManager.getFrame(id);
@@ -1848,7 +1794,7 @@ class App {
     }
   }
 
-  toggleFrameLock() {
+  _toggleFrameLock() {
     if (this.frameManager.selectedFrame) {
       const id = this.frameManager.selectedFrame.dataset.id;
       const frame = this.frameManager.getFrame(id);
@@ -1860,23 +1806,28 @@ class App {
     }
   }
 
-  async handleFilesFromIPC(paths) {
+  async _handleFilesFromIPC(paths) {
     if (!paths || paths.length === 0) return;
 
-    const hasProject = await this.ensureProjectOpen();
+    const hasProject = await this._ensureProjectOpen();
     if (!hasProject) return;
 
     for (const filePath of paths) {
       const ext = '.' + filePath.split('.').pop().toLowerCase();
-      if (IMAGE_EXTENSIONS.includes(ext)) {
+      if (CONSTANTS.IMAGE_EXTENSIONS.includes(ext)) {
         await this.entityManager.addImageFromFile(filePath);
       }
     }
 
-    this.updateCanvasTransform();
+    this._updateCanvasTransform();
   }
 
   destroy() {
+    if (this.memoryCheckInterval) {
+      clearInterval(this.memoryCheckInterval);
+      this.memoryCheckInterval = null;
+    }
+
     this.viewport.removeEventListener('wheel', this.boundHandlers.handleWheel);
     this.viewport.removeEventListener('mousedown', this.boundHandlers.handleMouseDown);
     this.viewport.removeEventListener('dragover', this.boundHandlers.handleDragOver);
@@ -1889,56 +1840,43 @@ class App {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-  console.log('[App] DOMContentLoaded fired');
-  
   window.api.onContextMenuAction((action) => {
-    console.log('[IPC] Received context-menu action:', action);
     if (!window.app) {
       console.error('[IPC] App not initialized yet!');
       return;
     }
-    if (action === 'add-images') {
-      window.app.addImages();
-    } else if (action === 'open-project') {
-      window.app.openProject();
-    } else if (action === 'reset-zoom') {
-      window.app.resetZoom();
-    } else if (action === 'create-frame') {
-      window.app.createFrame();
-    } else if (action === 'delete-frame') {
-      window.app.deleteSelectedFrame();
-    } else if (action === 'clear-frame') {
-      window.app.clearSelectedFrame();
-    } else if (action === 'bring-to-front') {
-      window.app.bringSelectedFrameToFront();
-    } else if (action === 'lock-frame') {
-      window.app.toggleFrameLock();
-    } else if (action === 'align-left') {
-      window.app.alignSelected('left');
-    } else if (action === 'align-right') {
-      window.app.alignSelected('right');
-    } else if (action === 'align-top') {
-      window.app.alignSelected('top');
-    } else if (action === 'align-bottom') {
-      window.app.alignSelected('bottom');
-    } else if (action === 'distribute-horizontally') {
-      window.app.distributeHorizontally();
-    } else if (action === 'distribute-vertically') {
-      window.app.distributeVertically();
-    } else if (action === 'distribute-to-grid') {
-      window.app.distributeToGrid();
+
+    const actionMap = {
+      'add-images': () => window.app._addImages(),
+      'open-project': () => window.app._openProject(),
+      'reset-zoom': () => window.app._resetZoom(),
+      'create-frame': () => window.app._createFrame(),
+      'delete-frame': () => window.app._deleteSelectedFrame(),
+      'clear-frame': () => window.app._clearSelectedFrame(),
+      'bring-to-front': () => window.app._bringSelectedFrameToFront(),
+      'lock-frame': () => window.app._toggleFrameLock(),
+      'align-left': () => window.app._alignSelected('left'),
+      'align-right': () => window.app._alignSelected('right'),
+      'align-top': () => window.app._alignSelected('top'),
+      'align-bottom': () => window.app._alignSelected('bottom'),
+      'distribute-horizontally': () => window.app._distributeHorizontally(),
+      'distribute-vertically': () => window.app._distributeVertically(),
+      'distribute-to-grid': () => window.app._distributeToGrid()
+    };
+
+    const handler = actionMap[action];
+    if (handler) {
+      handler();
     }
   });
 
   window.api.onFilesDropped((paths) => {
-    console.log('[IPC] Received files-dropped:', paths);
     if (!window.app) {
       console.error('[IPC] App not initialized yet!');
       return;
     }
-    window.app.handleFilesFromIPC(paths);
+    window.app._handleFilesFromIPC(paths);
   });
-  
+
   window.app = new App();
-  console.log('[App] App initialized');
 });
