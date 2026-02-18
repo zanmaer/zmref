@@ -18,7 +18,7 @@ contextBridge.exposeInMainWorld('api', {
   },
   
   path: {
-    join: (...args) => ipcRenderer.invoke('path:join', args),
+    join: (...args) => ipcRenderer.invoke('path:join', ...args),
     basename: (filePath) => ipcRenderer.invoke('path:basename', filePath),
     extname: (filePath) => ipcRenderer.invoke('path:extname', filePath),
     toFileURL: (filePath) => ipcRenderer.invoke('path:toFileURL', filePath)
@@ -37,6 +37,13 @@ contextBridge.exposeInMainWorld('api', {
     maximize: () => ipcRenderer.invoke('window:maximize'),
     close: () => ipcRenderer.invoke('window:close'),
     isMaximized: () => ipcRenderer.invoke('window:isMaximized')
+  },
+  
+  recentProjects: {
+    get: () => ipcRenderer.invoke('recent-projects:get'),
+    add: (projectPath) => ipcRenderer.invoke('recent-projects:add', projectPath),
+    validate: () => ipcRenderer.invoke('recent-projects:validate'),
+    remove: (projectPath) => ipcRenderer.invoke('recent-projects:remove', projectPath)
   },
   
   onFilesDropped: (callback) => {

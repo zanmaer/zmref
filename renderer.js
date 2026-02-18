@@ -86,6 +86,23 @@ class ProjectManager {
     return this.projectPath;
   }
 
+  async openProjectByPath(projectPath) {
+    console.log('[ProjectManager] openProjectByPath called with:', projectPath);
+    if (!projectPath) return null;
+
+    const configPath = await window.api.path.join(projectPath, 'config.json');
+    console.log('[ProjectManager] configPath:', configPath);
+    const exists = await window.api.fs.exists(configPath);
+    console.log('[ProjectManager] config exists:', exists);
+    if (!exists) return null;
+
+    this.projectPath = projectPath;
+    await this.ensureFilesDir();
+    await this.loadConfig();
+    console.log('[ProjectManager] Config loaded, returning:', this.projectPath);
+    return this.projectPath;
+  }
+
   async ensureFilesDir() {
     const filesDir = await window.api.fs.getFilesDir(this.projectPath);
     const result = await window.api.fs.mkdir(filesDir);
@@ -128,6 +145,14 @@ class ProjectManager {
       images: [],
       frames: []
     };
+  }
+
+  setProjectPath(path) {
+    this.projectPath = path;
+  }
+
+  setConfig(config) {
+    this.config = config;
   }
 
   async saveConfig() {
@@ -284,6 +309,7 @@ class EntityManager {
     img.className = 'canvas-image';
     img.dataset.id = imageData.id;
     img.draggable = false;
+    img.decoding = 'async';
 
     const filesDir = await this.projectManager.getFilesDir();
     const fullPath = await window.api.path.join(filesDir, imageData.name);
@@ -395,15 +421,30 @@ class EntityManager {
   async loadAllImages() {
     const config = this.projectManager.getConfig();
     const filesDir = await this.projectManager.getFilesDir();
+    console.log('[EntityManager] loadAllImages - filesDir:', filesDir);
     
-    for (const imageData of config.images) {
-      const fullPath = await window.api.path.join(filesDir, imageData.name);
-      const exists = await window.api.fs.exists(fullPath);
+    const BATCH_SIZE = 10;
+    const images = config.images;
+    
+    for (let i = 0; i < images.length; i += BATCH_SIZE) {
+      const batch = images.slice(i, i + BATCH_SIZE);
       
-      if (exists) {
-        await this.createEntity(imageData);
-      } else {
-        console.warn('[EntityManager] Image file not found, skipping:', imageData.name);
+      await Promise.all(
+        batch.map(async (imageData) => {
+          const fullPath = await window.api.path.join(filesDir, imageData.name);
+          const exists = await window.api.fs.exists(fullPath);
+          console.log('[EntityManager] Checking image:', fullPath, 'exists:', exists);
+          
+          if (exists) {
+            await this.createEntity(imageData);
+          } else {
+            console.warn('[EntityManager] Image file not found, skipping:', imageData.name);
+          }
+        })
+      );
+      
+      if (i + BATCH_SIZE < images.length) {
+        await new Promise(resolve => setTimeout(resolve, 50));
       }
     }
   }
@@ -814,13 +855,12 @@ class App {
     this.viewport = document.getElementById('viewport');
     this.canvas = document.getElementById('canvas');
     this.welcomeOverlay = document.getElementById('welcome-overlay');
+    this.recentProjectsList = document.getElementById('recent-projects-list');
     this.statusZoom = document.getElementById('status-zoom');
     this.statusProject = document.getElementById('status-project');
     this.btnOpenProject = document.getElementById('btn-open-project');
+    this.btnNewProject = document.getElementById('btn-new-project');
     this.dropStatus = document.getElementById('drop-status');
-    this.btnMinimize = document.getElementById('btn-minimize');
-    this.btnMaximize = document.getElementById('btn-maximize');
-    this.btnClose = document.getElementById('btn-close');
 
     this.camera = new Camera();
     this.projectManager = new ProjectManager();
@@ -849,14 +889,114 @@ class App {
     };
 
     this.setupEventListeners();
+    this.loadRecentProjects();
     this.updateCanvasTransform();
+  }
+
+  async loadRecentProjects() {
+    const projects = await window.api.recentProjects.validate();
+    this.renderRecentProjects(projects);
+  }
+
+  renderRecentProjects(projects) {
+    if (!this.recentProjectsList) return;
+    
+    this.recentProjectsList.innerHTML = '';
+    
+    const folderIcon = `<svg class="recent-project-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+    </svg>`;
+    
+    projects.forEach(project => {
+      const item = document.createElement('div');
+      item.className = 'recent-project-item';
+      
+      const icon = document.createElement('div');
+      icon.innerHTML = folderIcon;
+      icon.className = 'recent-project-icon';
+      
+      const info = document.createElement('div');
+      info.className = 'recent-project-info';
+      
+      const name = document.createElement('div');
+      name.className = 'recent-project-name';
+      name.textContent = project.path.split(/[/\\]/).pop();
+      
+      const pathEl = document.createElement('div');
+      pathEl.className = 'recent-project-path';
+      pathEl.textContent = project.path;
+      
+      const date = document.createElement('div');
+      date.className = 'recent-project-date';
+      date.textContent = this.formatDate(project.openedAt);
+      
+      info.appendChild(name);
+      info.appendChild(pathEl);
+      info.appendChild(date);
+      
+      item.appendChild(icon);
+      item.appendChild(info);
+      
+      item.addEventListener('click', () => {
+        this.openRecentProject(project.path);
+      });
+      
+      this.recentProjectsList.appendChild(item);
+    });
+  }
+
+  formatDate(timestamp) {
+    const now = Date.now();
+    const diff = now - timestamp;
+    const minutes = Math.floor(diff / 60000);
+    const hours = Math.floor(diff / 3600000);
+    const days = Math.floor(diff / 86400000);
+    
+    if (minutes < 1) return 'Just now';
+    if (minutes < 60) return `${minutes} min ago`;
+    if (hours < 24) return `${hours} hour${hours > 1 ? 's' : ''} ago`;
+    if (days === 1) return 'Yesterday';
+    if (days < 7) return `${days} days ago`;
+    return new Date(timestamp).toLocaleDateString();
+  }
+
+  async openRecentProject(path) {
+    console.log('[App] openRecentProject called with:', path);
+    const exists = await window.api.fs.exists(path);
+    console.log('[App] Path exists:', exists);
+    if (!exists) {
+      console.log('[App] Path does not exist, removing from recent');
+      await window.api.recentProjects.remove(path);
+      await this.loadRecentProjects();
+      return;
+    }
+
+    console.log('[App] Calling openProjectByPath...');
+    const success = await this.projectManager.openProjectByPath(path);
+    console.log('[App] openProjectByPath result:', success);
+    if (!success) {
+      console.log('[App] Failed to open project');
+      return;
+    }
+
+    await window.api.recentProjects.add(path);
+    await this.loadRecentProjects();
+
+    this.welcomeOverlay.classList.remove('active');
+    this.statusProject.textContent = path;
+
+    const config = this.projectManager.getConfig();
+    this.camera.setState(config.canvas);
+    this.updateCanvasTransform();
+
+    await this.entityManager.loadAllImages();
+    await this.frameManager.loadAllFrames();
+    this.repositionImagesInFrames();
   }
 
   setupEventListeners() {
     this.btnOpenProject.addEventListener('click', () => this.openProject());
-    this.btnMinimize.addEventListener('click', () => window.api.window.minimize());
-    this.btnMaximize.addEventListener('click', () => window.api.window.maximize());
-    this.btnClose.addEventListener('click', () => window.api.window.close());
+    this.btnNewProject.addEventListener('click', () => this.createNewProject());
 
     this.viewport.addEventListener('wheel', this.boundHandlers.handleWheel, { passive: false });
     this.viewport.addEventListener('mousedown', this.boundHandlers.handleMouseDown);
@@ -867,6 +1007,17 @@ class App {
     document.addEventListener('mouseup', this.boundHandlers.handleMouseUp);
     document.addEventListener('keydown', this.boundHandlers.handleKeyDown);
     document.addEventListener('keyup', this.boundHandlers.handleKeyUp);
+
+    if (window.performance && window.performance.memory) {
+      setInterval(() => {
+        const mem = window.performance.memory;
+        const usedMB = Math.round(mem.usedJSHeapSize / 1048576);
+        const totalMB = Math.round(mem.jsHeapSizeLimit / 1048576);
+        if (usedMB > totalMB * 0.8) {
+          console.warn('[App] Memory warning: using', usedMB, 'MB of', totalMB, 'MB');
+        }
+      }, 10000);
+    }
   }
 
   async ensureProjectOpen() {
@@ -897,6 +1048,9 @@ class App {
     const path = await this.projectManager.openProject();
     if (!path) return;
 
+    await window.api.recentProjects.add(path);
+    await this.loadRecentProjects();
+
     this.welcomeOverlay.classList.remove('active');
     this.statusProject.textContent = path;
 
@@ -907,6 +1061,34 @@ class App {
     await this.entityManager.loadAllImages();
     await this.frameManager.loadAllFrames();
     this.repositionImagesInFrames();
+  }
+
+  async createNewProject() {
+    const path = await window.api.dialog.openDirectory();
+    if (!path) return;
+
+    const filesDir = await window.api.path.join(path, 'files');
+    await window.api.fs.mkdir(filesDir);
+
+    const config = {
+      canvas: { cx: 0, cy: 0, zoom: 1 },
+      images: [],
+      frames: []
+    };
+    
+    const configPath = await window.api.path.join(path, 'config.json');
+    await window.api.fs.writeFile(configPath, JSON.stringify(config, null, 2));
+
+    await window.api.recentProjects.add(path);
+    await this.loadRecentProjects();
+
+    this.welcomeOverlay.classList.remove('active');
+    this.statusProject.textContent = path;
+
+    this.projectManager.setProjectPath(path);
+    this.projectManager.setConfig(config);
+    this.camera.setState(config.canvas);
+    this.updateCanvasTransform();
   }
 
   repositionImagesInFrames() {

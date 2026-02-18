@@ -2,9 +2,15 @@ const { app, BrowserWindow, ipcMain, dialog, webUtils, Menu } = require('electro
 const path = require('path');
 const fs = require('fs');
 
+process.env.GTK_USE_PORTAL = '1';
+
 app.commandLine.appendSwitch('disable-gpu-compositing');
 app.commandLine.appendSwitch('disable-accelerated-video-decode');
 app.commandLine.appendSwitch('disable-gpu-memory-buffer-compositor-resources');
+app.commandLine.appendSwitch('disable-gpu-rasterization');
+app.commandLine.appendSwitch('disable-accelerated-2d-canvas');
+app.commandLine.appendSwitch('enable-zero-copy');
+app.commandLine.appendSwitch('ignore-gpu-blocklist');
 
 let mainWindow;
 
@@ -214,7 +220,7 @@ ipcMain.handle('fs:getConfigPath', async (event, projectPath) => {
   return path.join(projectPath, 'config.json');
 });
 
-ipcMain.handle('path:join', async (event, args) => {
+ipcMain.handle('path:join', async (event, ...args) => {
   return path.join(...args);
 });
 
@@ -259,4 +265,104 @@ ipcMain.handle('window:close', () => {
 
 ipcMain.handle('window:isMaximized', () => {
   return mainWindow ? mainWindow.isMaximized() : false;
+});
+
+const getConfigPath = () => {
+  const home = app.getPath('home');
+  return path.join(home, '.config', 'zmboard_electron');
+};
+
+const getRecentProjectsPath = () => {
+  return path.join(getConfigPath(), 'recent-projects.json');
+};
+
+const ensureConfigDir = () => {
+  const configPath = getConfigPath();
+  if (!fs.existsSync(configPath)) {
+    fs.mkdirSync(configPath, { recursive: true });
+  }
+  return configPath;
+};
+
+ipcMain.handle('recent-projects:get', async () => {
+  try {
+    ensureConfigDir();
+    const filePath = getRecentProjectsPath();
+    if (!fs.existsSync(filePath)) {
+      return [];
+    }
+    const data = fs.readFileSync(filePath, 'utf8');
+    return JSON.parse(data);
+  } catch (error) {
+    console.error('[IPC] recent-projects:get error:', error);
+    return [];
+  }
+});
+
+ipcMain.handle('recent-projects:add', async (event, projectPath) => {
+  try {
+    ensureConfigDir();
+    const filePath = getRecentProjectsPath();
+    let projects = [];
+    
+    if (fs.existsSync(filePath)) {
+      projects = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+    }
+    
+    projects = projects.filter(p => p.path !== projectPath);
+    projects.unshift({ path: projectPath, openedAt: Date.now() });
+    projects = projects.slice(0, 5);
+    
+    fs.writeFileSync(filePath, JSON.stringify(projects, null, 2));
+    return { success: true };
+  } catch (error) {
+    console.error('[IPC] recent-projects:add error:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('recent-projects:validate', async () => {
+  try {
+    const filePath = getRecentProjectsPath();
+    if (!fs.existsSync(filePath)) {
+      return [];
+    }
+    
+    let projects = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+    const validProjects = [];
+    
+    for (const project of projects) {
+      const configFile = path.join(project.path, 'config.json');
+      if (fs.existsSync(configFile)) {
+        validProjects.push(project);
+      }
+    }
+    
+    if (validProjects.length !== projects.length) {
+      fs.writeFileSync(filePath, JSON.stringify(validProjects, null, 2));
+    }
+    
+    return validProjects;
+  } catch (error) {
+    console.error('[IPC] recent-projects:validate error:', error);
+    return [];
+  }
+});
+
+ipcMain.handle('recent-projects:remove', async (event, projectPath) => {
+  try {
+    const filePath = getRecentProjectsPath();
+    if (!fs.existsSync(filePath)) {
+      return { success: true };
+    }
+    
+    let projects = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+    projects = projects.filter(p => p.path !== projectPath);
+    fs.writeFileSync(filePath, JSON.stringify(projects, null, 2));
+    
+    return { success: true };
+  } catch (error) {
+    console.error('[IPC] recent-projects:remove error:', error);
+    return { success: false, error: error.message };
+  }
 });

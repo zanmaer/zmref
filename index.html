@@ -9,20 +9,7 @@
 </head>
 <body>
   <div id="app">
-    <div id="titlebar">
-      <span id="titlebar-title">ZmRef</span>
-      <div id="window-controls">
-        <button id="btn-minimize" class="window-control" title="Minimize">
-          <svg width="12" height="12" viewBox="0 0 12 12"><rect y="5" width="12" height="2" fill="currentColor"/></svg>
-        </button>
-        <button id="btn-maximize" class="window-control" title="Maximize">
-          <svg width="12" height="12" viewBox="0 0 12 12"><rect x="1" y="1" width="10" height="10" stroke="currentColor" stroke-width="2" fill="none"/></svg>
-        </button>
-        <button id="btn-close" class="window-control close" title="Close">
-          <svg width="12" height="12" viewBox="0 0 12 12"><path d="M1 1L11 11M1 11L11 1" stroke="currentColor" stroke-width="2"/></svg>
-        </button>
-      </div>
-    </div>
+    <div id="drag-region"></div>
     
     <div id="viewport-container">
       <div id="viewport">
@@ -33,11 +20,13 @@
     
     <div id="welcome-overlay" class="active">
       <div class="welcome-content">
-        <h1>ZmRef</h1>
-        <p>Minimalist Reference Tool</p>
-        <button id="btn-open-project">Open Project Folder</button>
-        <p class="hint">or drag & drop images to create new project</p>
-        <div id="drop-status"></div>
+        <div id="recent-projects">
+          <div id="recent-projects-list"></div>
+        </div>
+        <div class="welcome-actions">
+          <button id="btn-new-project">New Project</button>
+          <button id="btn-open-project">Open Project</button>
+        </div>
       </div>
     </div>
     
