@@ -13,6 +13,7 @@ contextBridge.exposeInMainWorld('api', {
     copyFile: (src, dest) => ipcRenderer.invoke('fs:copyFile', src, dest),
     readFile: (filePath) => ipcRenderer.invoke('fs:readFile', filePath),
     writeFile: (filePath, content) => ipcRenderer.invoke('fs:writeFile', filePath, content),
+    deleteFile: (filePath) => ipcRenderer.invoke('fs:deleteFile', filePath),
     getFilesDir: (projectPath) => ipcRenderer.invoke('fs:getFilesDir', projectPath),
     getConfigPath: (projectPath) => ipcRenderer.invoke('fs:getConfigPath', projectPath)
   },

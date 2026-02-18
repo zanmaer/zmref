@@ -225,6 +225,20 @@ ipcMain.handle('fs:writeFile', async (event, filePath, content) => {
   }
 });
 
+ipcMain.handle('fs:deleteFile', async (event, filePath) => {
+  try {
+    const normalizedPath = path.normalize(filePath);
+    if (!fs.existsSync(normalizedPath)) {
+      return { success: true };
+    }
+    fs.unlinkSync(normalizedPath);
+    return { success: true };
+  } catch (error) {
+    console.error('[IPC] fs:deleteFile error:', error.message);
+    return { success: false, error: error.message };
+  }
+});
+
 ipcMain.handle('fs:getFilesDir', async (event, projectPath) => {
   return path.join(projectPath, 'files');
 });

@@ -12,13 +12,13 @@ npm run build  # Production build (requires electron-builder)
 ### Lint & Test Commands
 
 ```bash
-# Lint (requires eslint installed: npm i -D eslint)
+# Lint (requires eslint: npm i -D eslint)
 npm run lint
-npm run lint -- --fix    # Auto-fix issues
+npm run lint -- --fix
 
 # Test (requires jest: npm i -D jest)
-npm test
-npm test -- --watch      # Watch mode
+npm test                    # Run all tests
+npm test -- --watch        # Watch mode
 npm test -- --testPathPattern=filename  # Single test file
 ```
 
@@ -36,7 +36,7 @@ npm test -- --testPathPattern=filename  # Single test file
 ### Naming Conventions
 | Type | Convention | Example |
 |------|------------|---------|
-| Classes | PascalCase | `class Camera`, `class FrameManager` |
+| Classes | PascalCase | `Camera`, `FrameManager` |
 | Methods/variables | camelCase | `this.cx`, `saveConfig()` |
 | Constants | UPPER_SNAKE_CASE | `IMAGE_EXTENSIONS` |
 | Private methods | prefix underscore | `_handleResize()` |
@@ -49,13 +49,8 @@ class MyClass {
     this._privateState = null;
   }
 
-  publicMethod() {
-    return this._privateMethod();
-  }
-
-  _privateMethod() {
-    return this.prop;
-  }
+  publicMethod() { return this._privateMethod(); }
+  _privateMethod() { return this.prop; }
 }
 ```
 
@@ -64,19 +59,18 @@ class MyClass {
 ## Architecture
 
 ```
-main.js      # Electron main: IPC handlers, window, context menus
-preload.js   # contextBridge: secure API to renderer
-renderer.js  # App: Camera, ProjectManager, EntityManager, FrameManager, App
+main.js      # Electron main: IPC, window, menus
+preload.js   # contextBridge API to renderer
+renderer.js  # App, Camera, ProjectManager, EntityManager, FrameManager
 index.html   # DOM structure
 style.css    # Styles with CSS variables
-config.json  # Project config
 ```
 
 ### Key Classes (renderer.js)
 | Class | Responsibility |
 |-------|----------------|
 | **Camera** | Pan/zoom math, coordinate transforms |
-| **ProjectManager** | File I/O, config loading/saving, debounced saves |
+| **ProjectManager** | File I/O, config loading/saving |
 | **EntityManager** | Image lifecycle: create, drag, delete, z-order |
 | **FrameManager** | Frame creation, resize (8 handles), lock |
 | **App** | Event coordination, UI state, shortcuts |
@@ -113,7 +107,7 @@ contextBridge.exposeInMainWorld('api', {
 |---------|-----------|---------|
 | `dialog:openDirectory` | renderer→main | Open folder picker |
 | `dialog:openFiles` | renderer→main | Open file picker |
-| `fs:readFile`, `fs:writeFile` | renderer→main | File I/O |
+| `fs:readFile`, `fs:writeFile`, `fs:deleteFile` | renderer→main | File I/O |
 | `path:join`, `path:basename` | renderer→main | Path utilities |
 | `window:minimize/maximize/close` | renderer→main | Window controls |
 | `recent-projects:get/add/remove` | renderer→main | Recent projects |
@@ -131,7 +125,7 @@ saveConfig() {
     try {
       await window.api.fs.writeFile(this.configPath, JSON.stringify(this.config, null, 2));
     } catch (error) {
-      console.error('[ProjectManager] Save failed:', error);
+      console.error('[ProjectManager] Save failed:', error.message);
     } finally {
       this.saveTimeout = null;
     }
@@ -175,9 +169,7 @@ zoomToPoint(delta, screenX, screenY, viewportRect) {
 | `[RENDERER]` | renderer.js |
 | `[Camera]`, `[ProjectManager]` | Specific classes |
 
-### DevTools
-- Open: `Ctrl+Shift+I`
-- Check console for `[RENDERER]` logs
+### DevTools: `Ctrl+Shift+I`
 
 ---
 
@@ -188,5 +180,7 @@ zoomToPoint(delta, screenX, screenY, viewportRect) {
 | Space (hold) | Pan mode |
 | Delete/Backspace | Delete selected |
 | Ctrl+0 | Reset zoom 100% |
+| Ctrl+A | Select all |
+| Escape | Clear selection |
 | Mouse wheel | Zoom at cursor |
 | Right-click | Context menu |

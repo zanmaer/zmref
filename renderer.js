@@ -470,9 +470,23 @@ class EntityManager {
     this.dragState.initialPositions = null;
   }
 
-  deleteEntity(id) {
+  async deleteEntity(id) {
     const entity = this.entities.get(id);
     if (entity) {
+      const imageName = entity.data.name;
+      if (imageName) {
+        try {
+          const filesDir = await this.projectManager.getFilesDir();
+          const filePath = await window.api.path.join(filesDir, imageName);
+          const exists = await window.api.fs.exists(filePath);
+          if (exists) {
+            await window.api.fs.deleteFile(filePath);
+          }
+        } catch (error) {
+          console.error('[EntityManager] Failed to delete image file:', error);
+        }
+      }
+
       if (entity._cleanup) entity._cleanup();
       entity.element.remove();
       this.entities.delete(id);
@@ -481,9 +495,11 @@ class EntityManager {
     }
   }
 
-  deleteSelected() {
+  async deleteSelected() {
     const idsToDelete = Array.from(this.selectedEntities);
-    idsToDelete.forEach(id => this.deleteEntity(id));
+    for (const id of idsToDelete) {
+      await this.deleteEntity(id);
+    }
   }
 
   async loadAllImages() {
@@ -1628,7 +1644,7 @@ class App {
     this.entityManager.endDrag();
   }
 
-  handleKeyDown(e) {
+  async handleKeyDown(e) {
     if (e.code === 'Space' && !this.panState.spacePressed) {
       this.panState.spacePressed = true;
       this.viewport.classList.add('pan-mode');
@@ -1637,12 +1653,12 @@ class App {
       this.frameManager.deselectFrame();
     } else if (e.code === 'Delete' || e.code === 'Backspace') {
       if (this.entityManager.hasSelection()) {
-        this.entityManager.deleteSelected();
+        await this.entityManager.deleteSelected();
       } else {
         const draggingEntity = this.entityManager.dragState.entity;
         if (draggingEntity) {
           const id = draggingEntity.dataset.id;
-          this.entityManager.deleteEntity(id);
+          await this.entityManager.deleteEntity(id);
         } else if (this.frameManager.selectedFrame) {
           const id = this.frameManager.selectedFrame.dataset.id;
           this.frameManager.deleteFrame(id);
