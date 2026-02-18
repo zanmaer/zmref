@@ -530,6 +530,7 @@ class FrameManager {
     const labelEl = document.createElement('div');
     labelEl.className = 'frame-label';
     labelEl.contentEditable = true;
+    labelEl.spellcheck = false;
     labelEl.textContent = frameData.name || '';
     labelEl.dataset.frameId = frameData.id;
     frameEl.appendChild(labelEl);
