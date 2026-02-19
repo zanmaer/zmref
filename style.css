@@ -146,52 +146,13 @@ html, body {
   z-index: 10;
 }
 
-.frame-handle-n {
-  top: -4px;
-  left: 10px;
-  right: 10px;
-  height: 8px;
-  cursor: n-resize;
-}
-
-.frame-handle-s {
-  bottom: -4px;
-  left: 10px;
-  right: 10px;
-  height: 8px;
-  cursor: s-resize;
-}
-
-.frame-handle-e {
-  right: -4px;
-  top: 10px;
-  bottom: 10px;
-  width: 8px;
-  cursor: e-resize;
-}
-
-.frame-handle-w {
-  left: -4px;
-  top: 10px;
-  bottom: 10px;
-  width: 8px;
-  cursor: w-resize;
-}
-
-.frame-handle-ne {
-  top: -4px;
-  right: -4px;
-  width: 12px;
-  height: 12px;
-  cursor: ne-resize;
-}
-
-.frame-handle-nw {
-  top: -4px;
-  left: -4px;
-  width: 12px;
-  height: 12px;
-  cursor: nw-resize;
+.frame-handle::before {
+  content: '';
+  position: absolute;
+  top: -80px;
+  left: -80px;
+  right: -80px;
+  bottom: -80px;
 }
 
 .frame-handle-se {
@@ -200,14 +161,6 @@ html, body {
   width: 12px;
   height: 12px;
   cursor: se-resize;
-}
-
-.frame-handle-sw {
-  bottom: -4px;
-  left: -4px;
-  width: 12px;
-  height: 12px;
-  cursor: sw-resize;
 }
 
 .frame-container.drag-over {

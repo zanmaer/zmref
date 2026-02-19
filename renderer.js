@@ -741,7 +741,7 @@ class FrameManager {
 
     this._setupLabelEvents(labelEl, frameData);
 
-    const handles = ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'];
+    const handles = ['se'];
     for (const handle of handles) {
       const handleEl = document.createElement('div');
       handleEl.className = `frame-handle frame-handle-${handle}`;
