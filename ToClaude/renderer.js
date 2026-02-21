@@ -362,14 +362,12 @@ class EntityManager {
     const fileURL = await window.api.path.toFileURL(fullPath);
     img.src = fileURL;
 
-    img.style.transform = `translate(${imageData.x}px, ${imageData.y}px) scale(${imageData.scale})`;
+    img.style.left = `${imageData.x}px`;
+    img.style.top = `${imageData.y}px`;
+    img.style.transform = `scale(${imageData.scale})`;
     img.style.zIndex = 10;
 
     this._setupEntityEvents(img, imageData);
-
-    img.onload = () => {
-      this._invalidateDimensionCache(imageData.id);
-    };
 
     img.onerror = () => {
       console.error('[EntityManager] Failed to load image:', imageData.name, '- Path:', fullPath);
@@ -419,7 +417,7 @@ class EntityManager {
             x: entity.data.x,
             y: entity.data.y
           };
-          entity.element.classList.add('dragging', 'is-dragging');
+          entity.element.classList.add('dragging');
         }
       });
     } else {
@@ -437,7 +435,7 @@ class EntityManager {
       this.dragState.currentY = null;
       this.dragState.initialPositions = null;
 
-      element.classList.add('dragging', 'is-dragging');
+      element.classList.add('dragging');
     }
   }
 
@@ -453,8 +451,8 @@ class EntityManager {
         if (entity) {
           const newX = pos.x + dx;
           const newY = pos.y + dy;
-          const scale = entity.data.scale || 1;
-          entity.element.style.transform = `translate(${newX}px, ${newY}px) scale(${scale})`;
+          entity.element.style.left = `${newX}px`;
+          entity.element.style.top = `${newY}px`;
         }
       });
       this.dragState.currentX = dx;
@@ -462,9 +460,9 @@ class EntityManager {
     } else {
       const newX = this.dragState.offsetX + dx;
       const newY = this.dragState.offsetY + dy;
-      const scale = this.dragState.imageData.scale || 1;
 
-      this.dragState.entity.style.transform = `translate(${newX}px, ${newY}px) scale(${scale})`;
+      this.dragState.entity.style.left = `${newX}px`;
+      this.dragState.entity.style.top = `${newY}px`;
 
       this.dragState.currentX = newX;
       this.dragState.currentY = newY;
@@ -481,7 +479,7 @@ class EntityManager {
           const newX = pos.x + dx;
           const newY = pos.y + dy;
 
-          entity.element.classList.remove('dragging', 'is-dragging');
+          entity.element.classList.remove('dragging');
           entity.data.x = newX;
           entity.data.y = newY;
           this.projectManager.updateImage(id, { x: newX, y: newY });
@@ -493,7 +491,7 @@ class EntityManager {
         x: this.dragState.currentX,
         y: this.dragState.currentY
       });
-      this.dragState.entity.classList.remove('dragging', 'is-dragging');
+      this.dragState.entity.classList.remove('dragging');
     }
     this.dragState = this._createDragState();
   }
@@ -609,7 +607,6 @@ class EntityManager {
       const fileURL = await window.api.path.toFileURL(fullPath);
       entity.element.src = fileURL;
       delete entity.element.dataset.isUnloaded;
-      this._invalidateDimensionCache(id);
     }
   }
 
@@ -682,12 +679,15 @@ class EntityManager {
     if (img && img.frameId && entity) {
       const frame = this.projectManager.getFrameById(img.frameId);
       if (frame) {
-        img.x = frame.x + entity.data.x;
-        img.y = frame.y + entity.data.y;
+        const relativeX = parseFloat(entity.element.style.left) || 0;
+        const relativeY = parseFloat(entity.element.style.top) || 0;
+
+        img.x = frame.x + relativeX;
+        img.y = frame.y + relativeY;
 
         this.canvas.appendChild(entity.element);
-        const scale = entity.data.scale || 1;
-        entity.element.style.transform = `translate(${img.x}px, ${img.y}px) scale(${scale})`;
+        entity.element.style.left = `${img.x}px`;
+        entity.element.style.top = `${img.y}px`;
       }
       img.frameId = null;
       this.projectManager.saveConfig();
@@ -1098,7 +1098,6 @@ class App {
   constructor() {
     this.viewport = document.getElementById('viewport');
     this.canvas = document.getElementById('canvas');
-    this.gridOverlay = document.getElementById('grid-overlay');
     this.welcomeOverlay = document.getElementById('welcome-overlay');
     this.recentProjectsList = document.getElementById('recent-projects-list');
     this.statusZoom = document.getElementById('status-zoom');
@@ -1415,8 +1414,8 @@ class App {
 
       entity.data.x = newX;
       entity.data.y = newY;
-      const scale = entity.data.scale || 1;
-      entity.element.style.transform = `translate(${newX}px, ${newY}px) scale(${scale})`;
+      entity.element.style.left = `${newX}px`;
+      entity.element.style.top = `${newY}px`;
       this.projectManager.updateImage(id, { x: newX, y: newY });
     });
   }
@@ -1534,8 +1533,8 @@ class App {
       if (el) {
         el.data.x = entity.x;
         el.data.y = entity.y;
-        const elScale = el.data.scale || 1;
-        el.element.style.transform = `translate(${entity.x}px, ${entity.y}px) scale(${elScale})`;
+        el.element.style.left = `${entity.x}px`;
+        el.element.style.top = `${entity.y}px`;
         this.projectManager.updateImage(entity.id, { x: entity.x, y: entity.y });
       }
     });
@@ -1552,8 +1551,8 @@ class App {
             const frameEl = frame.element;
             const contentEl = frameEl.querySelector('.frame-content');
             contentEl.appendChild(entity.element);
-            const scale = entity.data.scale || 1;
-            entity.element.style.transform = `translate(${img.x - frame.data.x}px, ${img.y - frame.data.y}px) scale(${scale})`;
+            entity.element.style.left = `${img.x - frame.data.x}px`;
+            entity.element.style.top = `${img.y - frame.data.y}px`;
           }
         }
       }
@@ -1839,8 +1838,8 @@ class App {
     const contentEl = frameEl.querySelector('.frame-content');
     contentEl.appendChild(entity.element);
 
-    const scale = entity.data.scale || 1;
-    entity.element.style.transform = `translate(${canvasX - frame.data.x}px, ${canvasY - frame.data.y}px) scale(${scale})`;
+    entity.element.style.left = `${canvasX - frame.data.x}px`;
+    entity.element.style.top = `${canvasY - frame.data.y}px`;
 
     this.entityManager.attachImageToFrame(imageId, frameId, canvasX, canvasY);
   }
@@ -1872,18 +1871,7 @@ class App {
 
   _updateCanvasTransform() {
     this.camera.applyToElement(this.canvas);
-    this._updateGridOverlay();
     this._updateStatus();
-  }
-
-  _updateGridOverlay() {
-    if (!this.gridOverlay) return;
-    const baseSize = 50;
-    const scaledSize = baseSize * this.camera.zoom;
-    this.gridOverlay.style.backgroundSize = `${scaledSize}px ${scaledSize}px`;
-    const offsetX = this.camera.cx % scaledSize;
-    const offsetY = this.camera.cy % scaledSize;
-    this.gridOverlay.style.backgroundPosition = `${offsetX}px ${offsetY}px`;
   }
 
   _updateStatus() {
@@ -1922,8 +1910,8 @@ class App {
             const entity = this.entityManager.getEntity(img.id);
             if (entity) {
               this.canvas.appendChild(entity.element);
-              const scale = entity.data.scale || 1;
-              entity.element.style.transform = `translate(${img.x}px, ${img.y}px) scale(${scale})`;
+              entity.element.style.left = `${img.x}px`;
+              entity.element.style.top = `${img.y}px`;
             }
           }
         });
