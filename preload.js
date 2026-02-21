@@ -61,6 +61,15 @@ contextBridge.exposeInMainWorld('api', {
   shell: {
     showItemInFolder: (filePath) => ipcRenderer.invoke('shell:showItemInFolder', filePath)
   },
+
+  thumbnail: {
+    generate: (srcPath, destPath) => ipcRenderer.invoke('thumbnail:generate', srcPath, destPath),
+    exists: (thumbPath) => ipcRenderer.invoke('thumbnail:exists', thumbPath),
+    getPath: (thumbsDir, imageId) => ipcRenderer.invoke('thumbnail:getPath', thumbsDir, imageId),
+    delete: (thumbPath) => ipcRenderer.invoke('thumbnail:delete', thumbPath),
+    ensureThumbsDir: (projectPath) => ipcRenderer.invoke('thumbnail:ensureThumbsDir', projectPath),
+    ensure: (srcPath, thumbsDir, imageId) => ipcRenderer.invoke('thumbnail:ensure', srcPath, thumbsDir, imageId)
+  },
   
   onFilesDropped: (callback) => {
     if (listenersMap.has('files-dropped')) {

@@ -4,6 +4,7 @@ const fs = require('fs');
 const fsPromises = require('fs').promises;
 const url = require('url');
 const crypto = require('crypto');
+const thumbnailService = require('./thumbnail-service');
 
 if (process.platform === 'linux') {
   process.env.GTK_USE_PORTAL = '1';
@@ -527,3 +528,80 @@ ipcMain.handle('shell:showItemInFolder', async (event, filePath) => {
     return { success: false, error: error.message };
   }
 });
+
+ipcMain.handle('thumbnail:generate', async (event, srcPath, destPath) => {
+  if (!isValidPath(srcPath) || !isValidPath(destPath)) {
+    return { success: false, error: 'Invalid path' };
+  }
+  try {
+    const result = await thumbnailService.generateThumbnail(srcPath, destPath);
+    return result;
+  } catch (error) {
+    console.error('[IPC] thumbnail:generate error:', error.message);
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('thumbnail:exists', async (event, thumbPath) => {
+  if (!isValidPath(thumbPath)) {
+    return false;
+  }
+  try {
+    return await thumbnailService.thumbnailExists(thumbPath);
+  } catch (error) {
+    console.error('[IPC] thumbnail:exists error:', error.message);
+    return false;
+  }
+});
+
+ipcMain.handle('thumbnail:getPath', async (event, thumbsDir, imageId) => {
+  if (!isValidPath(thumbsDir)) {
+    return '';
+  }
+  try {
+    return thumbnailService.getThumbnailPath(thumbsDir, imageId);
+  } catch (error) {
+    console.error('[IPC] thumbnail:getPath error:', error.message);
+    return '';
+  }
+});
+
+ipcMain.handle('thumbnail:delete', async (event, thumbPath) => {
+  if (!isValidPath(thumbPath)) {
+    return { success: false, error: 'Invalid path' };
+  }
+  try {
+    const result = await thumbnailService.deleteThumbnail(thumbPath);
+    return result;
+  } catch (error) {
+    console.error('[IPC] thumbnail:delete error:', error.message);
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('thumbnail:ensureThumbsDir', async (event, projectPath) => {
+  if (!isValidPath(projectPath)) {
+    return { success: false, error: 'Invalid project path' };
+  }
+  try {
+    const result = await thumbnailService.ensureThumbsDir(projectPath);
+    return result;
+  } catch (error) {
+    console.error('[IPC] thumbnail:ensureThumbsDir error:', error.message);
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('thumbnail:ensure', async (event, srcPath, thumbsDir, imageId) => {
+  if (!isValidPath(srcPath) || !isValidPath(thumbsDir)) {
+    return { success: false, error: 'Invalid path' };
+  }
+  try {
+    const result = await thumbnailService.ensureThumbnail(srcPath, thumbsDir, imageId);
+    return result;
+  } catch (error) {
+    console.error('[IPC] thumbnail:ensure error:', error.message);
+    return { success: false, error: error.message };
+  }
+});
+

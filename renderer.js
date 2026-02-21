@@ -18,7 +18,13 @@ const CONSTANTS = Object.freeze({
   MAX_ZOOM: 5,
   DEFAULT_ZOOM: 1,
   MEMORY_WARNING_THRESHOLD: 0.7,
-  MEMORY_CHECK_INTERVAL_MS: 10000
+  MEMORY_CHECK_INTERVAL_MS: 10000,
+  THUMBNAIL: Object.freeze({
+    MAX_SIZE: 800,
+    DIR_NAME: 'thumbs',
+    FORMAT: 'jpeg',
+    QUALITY: 85
+  })
 });
 
 class Camera {
@@ -122,13 +128,23 @@ class ProjectManager {
 
   async ensureFilesDir() {
     const filesDir = await window.api.fs.getFilesDir(this.projectPath);
-    const result = await window.api.fs.mkdir(filesDir);
-    if (!result.success) {
-      console.error('[ProjectManager] Failed to create files directory:', result.error);
+    const filesResult = await window.api.fs.mkdir(filesDir);
+    if (!filesResult.success) {
+      console.error('[ProjectManager] Failed to create files directory:', filesResult.error);
+      return false;
+    }
+
+    const thumbsResult = await window.api.thumbnail.ensureThumbsDir(this.projectPath);
+    if (!thumbsResult.success) {
+      console.error('[ProjectManager] Failed to create thumbs directory:', thumbsResult.error);
       return false;
     }
 
     return await window.api.fs.exists(filesDir);
+  }
+
+  async getThumbsDir() {
+    return await window.api.path.join(this.projectPath, CONSTANTS.THUMBNAIL.DIR_NAME);
   }
 
   async loadConfig() {
@@ -331,19 +347,28 @@ class EntityManager {
     const id = await window.api.crypto.randomUUID();
     const ext = await window.api.path.extname(filePath);
     const filesDir = await this.projectManager.getFilesDir();
+    const thumbsDir = await this.projectManager.getThumbsDir();
 
     const uniqueName = `${id}${ext}`;
     const destPath = await window.api.path.join(filesDir, uniqueName);
 
-    const result = await window.api.fs.copyFile(filePath, destPath);
-    if (!result.success) {
-      console.error('[EntityManager] Failed to copy file:', result.error);
+    const copyResult = await window.api.fs.copyFile(filePath, destPath);
+    if (!copyResult.success) {
+      console.error('[EntityManager] Failed to copy file:', copyResult.error);
       return null;
     }
+
+    const thumbResult = await window.api.thumbnail.ensure(destPath, thumbsDir, id);
+    if (!thumbResult.success) {
+      console.error('[EntityManager] Failed to generate thumbnail:', thumbResult.error);
+    }
+
+    const thumbName = thumbResult.success ? `${id}.jpg` : null;
 
     const imageData = {
       id,
       name: uniqueName,
+      thumbName: thumbName,
       x: Math.round(CONSTANTS.DEFAULT_IMAGE_POSITION.x + Math.random() * CONSTANTS.POSITION_RANDOM_RANGE),
       y: Math.round(CONSTANTS.DEFAULT_IMAGE_POSITION.y + Math.random() * CONSTANTS.POSITION_RANDOM_RANGE),
       scale: 1
@@ -362,9 +387,16 @@ class EntityManager {
     img.draggable = false;
     img.decoding = 'async';
 
-    const filesDir = await this.projectManager.getFilesDir();
-    const fullPath = await window.api.path.join(filesDir, imageData.name);
-    const fileURL = await window.api.path.toFileURL(fullPath);
+    let fileURL;
+    if (imageData.thumbName) {
+      const thumbsDir = await this.projectManager.getThumbsDir();
+      const thumbPath = await window.api.path.join(thumbsDir, imageData.thumbName);
+      fileURL = await window.api.path.toFileURL(thumbPath);
+    } else {
+      const filesDir = await this.projectManager.getFilesDir();
+      const fullPath = await window.api.path.join(filesDir, imageData.name);
+      fileURL = await window.api.path.toFileURL(fullPath);
+    }
     img.src = fileURL;
 
     img.style.transform = `translate(${Math.round(imageData.x)}px, ${Math.round(imageData.y)}px) scale(${imageData.scale})`;
@@ -377,7 +409,7 @@ class EntityManager {
     };
 
     img.onerror = () => {
-      console.error('[EntityManager] Failed to load image:', imageData.name, '- Path:', fullPath);
+      console.error('[EntityManager] Failed to load image:', imageData.name);
       img.classList.add('load-error');
     };
 
@@ -517,6 +549,17 @@ class EntityManager {
           }
         } catch (error) {
           console.error('[EntityManager] Failed to delete image file:', error);
+        }
+      }
+
+      const thumbName = entity.data.thumbName;
+      if (thumbName) {
+        try {
+          const thumbsDir = await this.projectManager.getThumbsDir();
+          const thumbPath = await window.api.path.join(thumbsDir, thumbName);
+          await window.api.thumbnail.delete(thumbPath);
+        } catch (error) {
+          console.error('[EntityManager] Failed to delete thumbnail:', error);
         }
       }
 

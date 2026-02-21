@@ -23,6 +23,11 @@ PNG, JPG, JPEG, WebP, GIF, SVG
 - Node.js >= 18.0.0
 - npm
 
+### Dependencies
+- `sharp` - High-performance image processing for thumbnail generation
+- `electron` - Desktop application framework
+- `electron-builder` - Packaging and distribution
+
 ### Commands
 
 ```bash
@@ -39,12 +44,22 @@ npm run test       # No tests configured
 ## Project Structure
 
 ```
-main.js          # Electron main process: IPC handlers, window, menus
-preload.js       # Context bridge API (security layer)
-renderer.js      # App logic: Camera, ProjectManager, EntityManager, FrameManager, App
-index.html       # DOM structure
-style.css        # Styles with CSS variables
-package.json     # Project config, scripts, dependencies
+main.js               # Electron main process: IPC handlers, window, menus
+preload.js            # Context bridge API (security layer)
+renderer.js           # App logic: Camera, ProjectManager, EntityManager, FrameManager, App
+thumbnail-service.js  # Thumbnail generation service using Sharp
+index.html            # DOM structure
+style.css             # Styles with CSS variables
+package.json          # Project config, scripts, dependencies
+```
+
+### Project Directory Structure
+
+```
+{project}/
+├── config.json       # Project state: canvas, images, frames
+├── files/            # Original image files ({uuid}.{ext})
+└── thumbs/           # Thumbnail files ({uuid}.jpg, 800px max)
 ```
 
 ---
@@ -56,10 +71,17 @@ package.json     # Project config, scripts, dependencies
 | Class | Responsibility |
 |-------|----------------|
 | **Camera** | Pan/zoom math, coordinate transforms, view state |
-| **ProjectManager** | File I/O, config loading/saving, recent projects |
-| **EntityManager** | Image lifecycle: create, drag, delete, offscreen unload |
+| **ProjectManager** | File I/O, config loading/saving, recent projects, thumbs directory |
+| **EntityManager** | Image lifecycle: create, drag, delete, thumbnail loading |
 | **FrameManager** | Frame creation, resize handles, lock state |
 | **App** | Event coordination, UI state, shortcuts, memory monitoring |
+
+### Main Process Modules
+
+| Module | Responsibility |
+|--------|----------------|
+| **main.js** | IPC handlers, window management, menus, shell commands |
+| **thumbnail-service.js** | Sharp-based thumbnail generation (800px max, JPEG) |
 
 ### IPC Communication
 
@@ -76,6 +98,12 @@ package.json     # Project config, scripts, dependencies
 | `window:minimize/maximize/close` | Window controls |
 | `recent-projects:*` | Recent projects management |
 | `files-dropped` | File drop notification |
+| `thumbnail:generate` | Generate thumbnail from source image |
+| `thumbnail:exists` | Check if thumbnail file exists |
+| `thumbnail:getPath` | Get thumbnail path for image ID |
+| `thumbnail:delete` | Delete thumbnail file |
+| `thumbnail:ensureThumbsDir` | Ensure thumbs directory exists |
+| `thumbnail:ensure` | Generate thumbnail if missing (atomic) |
 
 ### Project Config Structure
 
@@ -84,10 +112,37 @@ Projects store state in `config.json`:
 ```json
 {
   "canvas": { "cx": 0, "cy": 0, "zoom": 1 },
-  "images": [{ "id": "uuid", "name": "file.png", "x": 100, "y": 200, "scale": 1 }],
-  "frames": [{ "id": "uuid", "name": "Frame 1", "x": 200, "y": 200, "width": 300, "height": 200 }]
+  "images": [
+    {
+      "id": "uuid",
+      "name": "uuid.png",
+      "thumbName": "uuid.jpg",
+      "x": 100,
+      "y": 200,
+      "scale": 1
+    }
+  ],
+  "frames": [
+    {
+      "id": "uuid",
+      "name": "Frame 1",
+      "x": 200,
+      "y": 200,
+      "width": 300,
+      "height": 200
+    }
+  ]
 }
 ```
+
+**Image Data Structure**:
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string | UUID for the image |
+| `name` | string | Original filename in `files/` directory |
+| `thumbName` | string | Thumbnail filename in `thumbs/` directory (optional) |
+| `x`, `y` | number | Canvas position |
+| `scale` | number | Scale multiplier (1.0 = original size) |
 
 ---
 
@@ -123,9 +178,42 @@ const CONSTANTS = Object.freeze({
   DEFAULT_ZOOM: 1,
   MIN_ZOOM: 0.05,
   MAX_ZOOM: 5,
+  THUMBNAIL: Object.freeze({
+    MAX_SIZE: 800,
+    DIR_NAME: 'thumbs',
+    FORMAT: 'jpeg',
+    QUALITY: 85
+  }),
   // ...
 });
 ```
+
+### Thumbnail Service Pattern
+
+**Main Process** (`thumbnail-service.js`): Uses Sharp for image processing.
+
+```javascript
+const sharp = require('sharp');
+
+// Generate thumbnail (800px max, JPEG)
+async function generateThumbnail(srcPath, destPath, maxSize = 800) {
+  // CRITICAL: Ensure parent directory exists first
+  const destDir = path.dirname(destPath);
+  await fs.mkdir(destDir, { recursive: true });
+
+  await sharp(srcPath)
+    .resize(maxSize, maxSize, { fit: 'inside' })
+    .jpeg({ quality: 85 })
+    .toFile(destPath);
+}
+```
+
+**Key Points**:
+- Sharp does NOT create directories automatically - always call `mkdir` first
+- Use `fit: 'inside'` for aspect-ratio-preserving resize to max dimension
+- All images normalized to 800px on longest side (even smaller images)
+- Thumbnails always JPEG format for consistency
+- Original files preserved in `files/` for "Open in Explorer"
 
 ### Security Requirements
 
@@ -210,9 +298,10 @@ saveTimeout = setTimeout(async () => {
 ## Development Tips
 
 ### Debugging
-- Check console output with `[MAIN]`, `[RENDERER]`, `[App]` prefixes
+- Check console output with `[MAIN]`, `[RENDERER]`, `[App]`, `[ThumbnailService]` prefixes
 - Use `window.performance.memory` to monitor heap usage
 - Render process crashes trigger recovery mode automatically
+- Thumbnail errors logged as `[EntityManager] Failed to generate thumbnail`
 
 ### Canvas Positioning
 - Default canvas: 5000x5000px (defined in style.css)
@@ -231,6 +320,25 @@ backface-visibility: hidden;
 image-rendering: crisp-edges;
 ```
 
+### Thumbnail Development
+
+**Adding a new image with thumbnail**:
+```javascript
+// renderer.js - EntityManager.addImageFromFile()
+const thumbResult = await window.api.thumbnail.ensure(srcPath, thumbsDir, id);
+if (!thumbResult.success) {
+  console.error('[EntityManager] Failed to generate thumbnail:', thumbResult.error);
+}
+// Fallback: entity loads without thumbnail (uses original)
+```
+
+**Common Issues**:
+| Issue | Solution |
+|-------|----------|
+| `unable to open for write` | Ensure directory exists with `fs.mkdir(dir, { recursive: true })` |
+| Thumbnail not displaying | Check `thumbName` field in config, verify file exists in `thumbs/` |
+| Original opens instead | Verify `thumbName` is set, check `createEntity()` logic |
+
 ---
 
 ## Testing
@@ -239,6 +347,13 @@ No test suite is currently configured. When adding tests:
 - Use Jest as the testing framework
 - Place test files in `test/` directory
 - Follow existing naming conventions
+
+### Thumbnail Testing Checklist
+- [ ] Verify `thumbs/` directory created on first image add
+- [ ] Verify thumbnail is 800px on longest dimension
+- [ ] Verify "Open in Explorer" opens original (not thumbnail)
+- [ ] Verify thumbnail deleted when image deleted
+- [ ] Verify fallback to original if thumbnail generation fails
 
 ---
 
