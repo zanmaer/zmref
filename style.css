@@ -65,8 +65,8 @@ html, body {
 
 #canvas {
   position: absolute;
-  width: 20000px;
-  height: 20000px;
+  width: 5000px;
+  height: 5000px;
   transform-origin: 0 0;
 }
 
