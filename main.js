@@ -11,10 +11,8 @@ if (process.platform === 'linux') {
 
 const RECENT_PROJECTS_MAX = 5;
 
-app.commandLine.appendSwitch('disable-gpu-compositing');
 app.commandLine.appendSwitch('disable-accelerated-video-decode');
 app.commandLine.appendSwitch('disable-gpu-memory-buffer-compositor-resources');
-app.commandLine.appendSwitch('disable-gpu-rasterization');
 app.commandLine.appendSwitch('disable-accelerated-2d-canvas');
 
 let mainWindow;
