@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=ZmRef
+Comment=Minimalist Reference Image Viewer
+Exec=zmref %U
+Terminal=false
+Type=Application
+Icon=zmref
+StartupWMClass=zmref
+Categories=Graphics;Viewer;
+MimeType=image/png;image/jpeg;image/jpg;image/webp;image/gif;image/svg+xml;
+Keywords=reference;images;canvas;organizer;

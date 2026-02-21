@@ -7,10 +7,15 @@
     "start": "electron .",
     "dev": "electron .",
     "build": "electron-builder",
+    "build:linux": "electron-builder --linux",
+    "build:arch": "electron-builder --linux pacman",
     "lint": "echo 'No linter configured'",
     "test": "echo 'No tests configured'"
   },
-  "author": "Zanmaer",
+  "author": {
+    "name": "Zanmaer",
+    "email": "zanmaer@example.com"
+  },
   "license": "MIT",
   "engines": {
     "node": ">=18.0.0"
@@ -21,5 +26,58 @@
   },
   "dependencies": {
     "sharp": "^0.34.5"
+  },
+  "build": {
+    "appId": "com.zanmaer.zmref",
+    "productName": "ZmRef",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "**/*",
+      "!dist/**",
+      "!build/**",
+      "!.git/**",
+      "!.qwen/**",
+      "!*.md"
+    ],
+    "linux": {
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": ["x64"]
+        },
+        {
+          "target": "deb",
+          "arch": ["x64"]
+        }
+      ],
+      "category": "Graphics",
+      "icon": "build/zmref.png",
+      "desktop": {
+        "Name": "ZmRef",
+        "Comment": "Minimalist Reference Image Viewer",
+        "Categories": "Graphics;Viewer;",
+        "MimeType": "image/png;image/jpeg;image/webp;image/gif;image/svg+xml;",
+        "StartupWMClass": "zmref"
+      }
+    },
+    "appImage": {
+      "artifactName": "${productName}-${version}.${ext}"
+    },
+    "deb": {
+      "artifactName": "${productName}-${version}.${ext}",
+      "depends": [
+        "libgtk-3-0",
+        "libnotify4",
+        "libnss3",
+        "libxss1",
+        "libxtst6",
+        "xdg-utils",
+        "libatspi2.0-0",
+        "libuuid1"
+      ]
+    }
   }
 }
